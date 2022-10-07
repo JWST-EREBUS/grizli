@@ -3905,7 +3905,7 @@ def make_reference_wcs(info, files=None, output='mosaic_wcs-ref.fits', filters=[
         return ref_hdu[1]
 
 
-def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F125W', 'F140W', 'F150W', 'F160W', 'F200W'], ref_image=None, ref_wcs=None, bits=None, pixfrac=0.75, scale=0.06, make_combined=False, drizzle_filters=True, skysub=False, skymethod='localmin', match_str=[], context=False, pad_reference=60, min_nexp=2, static=True, skip_products=[], include_saturated=False, multi_driz_cr=False, filter_driz_cr=False, **kwargs):
+def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F125W', 'F140W', 'F150W', 'F160W', 'F200W'], ref_image=None, ref_wcs=None, bits=None, pixfrac=0.75, scale=0.06, make_combined=False, drizzle_filters=True, skysub=False, skymethod='localmin', match_str=[], context=False, pad_reference=60, min_nexp=2, static=True, skip_products=[], include_saturated=False, multi_driz_cr=False, filter_driz_cr=False,final_wht_type='EXP', **kwargs):
     """
     Drizzle filter groups based on precomputed image associations
     """
@@ -4068,7 +4068,7 @@ def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F
                               bits=bits, final_wcs=True, final_rot=0,
                               final_outnx=None, final_outny=None,
                               final_ra=None, final_dec=None,
-                              final_wht_type='IVM', final_wt_scl='exptime',
+                              final_wht_type=final_wht_type, final_wt_scl='exptime',
                               check_overlaps=False, context=context,
                               static=(static & (len(inst_keys) == 1)),
                               include_saturated=include_saturated,
@@ -4086,7 +4086,7 @@ def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F
                               skymethod=skymethod, bits=bits, final_wcs=True,
                               final_rot=0, final_outnx=None, final_outny=None,
                               final_ra=None, final_dec=None,
-                              final_wht_type='IVM', final_wt_scl='exptime',
+                              final_wht_type=final_wht_type, final_wt_scl='exptime',
                               check_overlaps=False, context=context,
                               static=static,
                               include_saturated=include_saturated,
