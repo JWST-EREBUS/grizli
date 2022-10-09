@@ -4092,7 +4092,12 @@ def process_direct_grism_visit(direct={},
         if isJWST:
             if nircam_wisp_kwargs is not None:
                 for _file in direct['files']:
-                    nircam_wisp_correction(_file, **nircam_wisp_kwargs)
+                    try:
+                        nircam_wisp_correction(_file, **nircam_wisp_kwargs)
+                    except Exception as e:
+                        logstr = '# !! NIRCam WISP correction failed: {0}'.format(e)
+                        utils.log_exception(utils.LOGFILE, logstr)
+                        pass
                 
             # if oneoverf_kwargs is not None:
             #     oneoverf_column_correction(direct, **oneoverf_kwargs)
