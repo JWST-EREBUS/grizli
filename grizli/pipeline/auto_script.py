@@ -976,10 +976,10 @@ def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_pr
             _resp = mastquery.utils.download_from_mast(tab[jw], 
                                                        force_rate=force_rate)
             # update targname
-            for _file in _resp:
-                if os.path.exists(_file) & (jwst_utils is not None):
-                    jwst_utils.initialize_jwst_image(_file)
-                    jwst_utils.set_jwst_to_hst_keywords(_file, reset=True)
+            # for _file in _resp:
+            #     if os.path.exists(_file) & (jwst_utils is not None):
+            #         jwst_utils.initialize_jwst_image(_file)
+            #         jwst_utils.set_jwst_to_hst_keywords(_file, reset=True)
                     
         tab = tab[~jw]
         
@@ -4099,7 +4099,7 @@ FILTER_COMBINATIONS = {'ir': IR_M_FILTERS+IR_W_FILTERS,
                        'opt': OPT_M_FILTERS+OPT_W_FILTERS}
 
 
-def make_filter_combinations(root, weight_fnu=True, filter_combinations=FILTER_COMBINATIONS, min_count=1):
+def make_filter_combinations(root, weight_fnu=True, filter_combinations=FILTER_COMBINATIONS, force_photfnu=None, min_count=1):
     """
     Combine ir/opt mosaics manually scaling a specific zeropoint
     """
@@ -4119,7 +4119,11 @@ def make_filter_combinations(root, weight_fnu=True, filter_combinations=FILTER_C
                    'PHOTBW': 1132.39, 'PHOTZPT': -21.1,
                    'PHOTMODE': 'WFC3 IR F140W',
                    'PHOTPLAM': 13922.907, 'FILTER': 'F140W'}
-
+                   
+    if force_photfnu is not None:
+        for k in ref_h:
+            ref_h[k]['PHOTFNU'] = force_photfnu
+            
     ####
     count = {}
     num = {}
@@ -4171,7 +4175,14 @@ def make_filter_combinations(root, weight_fnu=True, filter_combinations=FILTER_C
 
         photplam = im_i[0].header['PHOTPLAM']
         ref_photplam = ref_h_i['PHOTPLAM']
+        
+        if weight_fnu == 2:
+            photflam = im_i[0].header['PHOTFNU']
+            ref_photflam = ref_h_i['PHOTFNU']
 
+            photplam = 1.0
+            ref_photplam = 1.0
+            
         head[band] = im_i[0].header.copy()
         for k in ref_h_i:
             head[band][k] = ref_h_i[k]
