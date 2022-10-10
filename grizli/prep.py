@@ -4096,7 +4096,7 @@ def process_direct_grism_visit(direct={},
                         nircam_wisp_correction(_file, **nircam_wisp_kwargs)
                     except Exception as e:
                         logstr = '# !! NIRCam WISP correction failed: {0}'.format(e)
-                        utils.log_exception(utils.LOGFILE, logstr)
+                        utils.log_comment(utils.LOGFILE, logstr, verbose=True)
                         pass
                 
             # if oneoverf_kwargs is not None:
@@ -6338,6 +6338,8 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
 
         print('\n\n### drizzle_overlaps: {0} ({1})\n'.format(group['product'],
                                                      len(group['files'])))
+        print('### Final drizzle bits: {0}\n'.format(bits))
+        print('### Final drizzle CR: {0}, CR SNR:{1}, CR scale: {2}\n'.format(run_driz_cr, driz_cr_snr, driz_cr_scale))
         
         if isJWST:
             # Make sure HST-like keywords are set for JWST
@@ -6381,25 +6383,25 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
         if 'reference' in group:
             AstroDrizzle(group['files'], output=group['product'],
                      clean=True, context=context, preserve=False,
-                     skysub=skysub, skyuser=skyuser, skymethod=skymethod,
+                     skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
                      driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,
                      median=run_driz_cr, blot=run_driz_cr,
                      driz_cr=run_driz_cr,
                      driz_cr_snr=driz_cr_snr, driz_cr_scale=driz_cr_scale,
-                     driz_cr_corr=False, driz_combine=True,
+                     driz_cr_corr=False, driz_combine=True, driz_sep_pixfrac=pixfrac,
                      final_bits=bits, coeffs=True, build=build,
                      final_wht_type=final_wht_type,
                      final_wt_scl=final_wt_scl,
                      final_pixfrac=pixfrac,
                      final_wcs=True, final_refimage=group['reference'],
                      final_kernel=final_kernel,
-                     resetbits=resetbits,
+                     crbit=2048+4096, combine_type = 'median',
                      static=(static & (len(inst_keys) == 1)), 
                      gain=gain, rdnoise=rdnoise)
         else:
             AstroDrizzle(group['files'], output=group['product'],
                      clean=True, context=context, preserve=False,
-                     skysub=skysub, skyuser=skyuser, skymethod=skymethod,
+                     skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
                      driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,
                      median=run_driz_cr, blot=run_driz_cr,
                      driz_cr=run_driz_cr,
@@ -6414,7 +6416,8 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
                      final_ra=final_ra, final_dec=final_dec,
                      final_outnx=final_outnx, final_outny=final_outny,
                      final_kernel=final_kernel,
-                     resetbits=resetbits,
+                     resetbits=resetbits,crbit=2048+4096,
+                     combine_type = 'median',
                      static=(static & (len(inst_keys) == 1)),
                      gain=gain, rdnoise=rdnoise)
         
