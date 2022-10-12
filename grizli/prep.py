@@ -6382,6 +6382,16 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
             rdnoise = '0.0'
         else:
             rdnoise = None
+
+        if 'combine_type' in kwargs:
+            combine_type = kwargs['combine_type']
+        else:
+            combine_type = 'median'
+        
+        if 'crbit' in kwargs:
+            crbit = kwargs['crbit']
+        else:
+            crbit = 4096+2048
             
         # Fetch files from aws
         if 'reference' in group:
@@ -6399,14 +6409,14 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
                      final_pixfrac=pixfrac,
                      final_wcs=True, final_refimage=group['reference'],
                      final_kernel=final_kernel,
-                     crbit=2048+4096, combine_type = 'median',
+                     crbit=crbit, combine_type = combine_type,
                      static=(static & (len(inst_keys) == 1)), 
                      gain=gain, rdnoise=rdnoise)
         else:
             AstroDrizzle(group['files'], output=group['product'],
                      clean=True, context=context, preserve=False,
                      skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
-                     driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,
+                     driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,driz_sep_pixfrac=pixfrac,drizzle_sep_bits=False,
                      median=run_driz_cr, blot=run_driz_cr,
                      driz_cr=run_driz_cr,
                      driz_cr_snr=driz_cr_snr, driz_cr_scale=driz_cr_scale,
@@ -6420,8 +6430,8 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
                      final_ra=final_ra, final_dec=final_dec,
                      final_outnx=final_outnx, final_outny=final_outny,
                      final_kernel=final_kernel,
-                     resetbits=resetbits,crbit=2048+4096,
-                     combine_type = 'median',
+                     resetbits=resetbits,crbit=crbit,
+                     combine_type = combine_type,
                      static=(static & (len(inst_keys) == 1)),
                      gain=gain, rdnoise=rdnoise)
         
