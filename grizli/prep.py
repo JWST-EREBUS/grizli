@@ -718,15 +718,19 @@ def match_lists(input, output, transform=None, scl=3600., simple=True,
     tf.estimate(input[input_ix, :], output[output_ix])
 
     if not simple:
+        min_samples = min(3, input[input_ix, :].shape[1])
+        print('  RANSAC: min_samples={0}'.format(min_samples))
         model, inliers = ransac((input[input_ix, :], output[output_ix, :]),
-                                   transform, min_samples=3,
+                                   transform, min_samples=min_samples,
                                    residual_threshold=3, max_trials=100)
 
         # Iterate
         if inliers.sum() > 2:
+            min_samples = min(3, input[input_ix[inliers], :].shape[1])
+            print('  RANSAC: min_samples={0}'.format(min_samples))
             m_i, in_i = ransac((input[input_ix[inliers], :], 
                                 output[output_ix[inliers], :]),
-                                   transform, min_samples=3,
+                                   transform, min_samples=min_samples,
                                    residual_threshold=3, max_trials=100)
             if in_i.sum() > 2:
                 model = m_i
@@ -1053,6 +1057,11 @@ def align_drizzled_image(root='',
                 titer += 1
         
         #print(output.shape, output_ix.shape, output_ix.min(), output_ix.max(), titer, toler, input_ix.shape, input.shape)
+        
+        try:
+            input_ix
+        except NameError:
+            input_ix = []
 
         titer = 0
         while (len(input_ix)*1./len(input) < 0.1) & (titer < 3):
@@ -1067,7 +1076,8 @@ def align_drizzled_image(root='',
                                   triangle_ba_max=triangle_ba_max,
                                   assume_close=assume_close,
                                   transform=transform)
-            except:
+            except Exception as e:
+                print('match list failed:', e)
                 pass
 
             output_ix, input_ix, outliers, tf = res
