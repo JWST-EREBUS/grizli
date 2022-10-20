@@ -1341,7 +1341,7 @@ def load_visit_info(root='j033216m2743', path='./', verbose=True):
     return visits, groups, info
 
 
-def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, combine_same_pa=True, combine_minexp=2, is_dash=False, filters=VALID_FILTERS, max_dt=1e9, visit_split_shift=1.5, file_query='*'):
+def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, combine_same_pa=True, combine_minexp=2, is_dash=False, filters=VALID_FILTERS, max_dt=1e9, visit_split_shift=1.5, file_query='*',jwst_detector=True):
 
     """
     Organize exposures into "visits" by filter / position / PA / epoch
@@ -1438,7 +1438,7 @@ def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, com
     #         hdu.flush()
     #         hdu.close()
             
-    info = utils.get_flt_info(files)
+    info = utils.get_flt_info(files,jwst_detector=jwst_detector)
 
     # Only F814W on ACS
     if ONLY_F814W:
