@@ -4101,10 +4101,11 @@ FILTER_COMBINATIONS = {'ir': IR_M_FILTERS+IR_W_FILTERS,
                        'opt': OPT_M_FILTERS+OPT_W_FILTERS}
 
 
-def make_filter_combinations(root, weight_fnu=True, filter_combinations=FILTER_COMBINATIONS, force_photfnu=None, min_count=1):
+def make_filter_combinations(root, weight_fnu=2, filter_combinations=FILTER_COMBINATIONS, force_photfnu=1.e-8, min_count=1, block_filters=[]):
     """
     Combine ir/opt mosaics manually scaling a specific zeropoint
     """
+    from astropy.nddata import block_reduce
 
     # Output normalization os F814W/F140W
     ref_h = {}
@@ -4141,7 +4142,7 @@ def make_filter_combinations(root, weight_fnu=True, filter_combinations=FILTER_C
     sci_files = glob.glob('{0}-[cf]*sci.fits*'.format(root))
     sci_files.sort()
     
-    for sci_file in sci_files:
+    for _isci, sci_file in enumerate(sci_files):
         #filt_i = sci_file.split('_dr')[0].split('-')[-1]
         #filt_ix = sci_file.split('_dr')[0].split('-')[-1]
         filt_i = sci_file.split(root+'-')[1].split('_dr')[0]
@@ -4184,26 +4185,60 @@ def make_filter_combinations(root, weight_fnu=True, filter_combinations=FILTER_C
 
             photplam = 1.0
             ref_photplam = 1.0
-            
-        head[band] = im_i[0].header.copy()
-        for k in ref_h_i:
-            head[band][k] = ref_h_i[k]
-
-        if num[band] is None:
-            num[band] = im_i[0].data*0
-            den[band] = num[band]*0
-
+        
+        if band not in head:
+            head[band] = im_i[0].header.copy()
+        else:
+            for k in im_i[0].header:
+                head[band][k] = im_i[0].header[k]
+                
+            for k in ref_h_i:
+                head[band][k] = ref_h_i[k]
+        
         scl = photflam/ref_photflam
         if weight_fnu:
             scl_weight = photplam**2/ref_photplam**2
         else:
             scl_weight = 1.
-
-        print(sci_file, filt_i, band, scl, scl_weight)
-        den_i = wht_i[0].data/scl**2*scl_weight
-        num[band] += im_i[0].data*scl*den_i
+        
+        if 'NCOMP' in head[band]:
+            head[band]['NCOMP'] += 1
+        else:
+            head[band]['NCOMP'] = (1, 'Number of combined images')
+        
+        _sci = im_i[0].data.astype(np.float32)
+        _wht = wht_i[0].data.astype(np.float32)
+        
+        if filt_i.lower() in [b.lower() for b in block_filters]:
+            _blocked = True
+            blocked_wht = block_reduce(_wht, 2) / 4**2
+            blocked_sci = block_reduce(_sci*_wht, 2) / blocked_wht / 4
+            _sci = blocked_sci
+            _sci[blocked_wht <= 0] = 0
+            _wht = blocked_wht
+            
+        else:
+            _blocked = False
+                  
+        msg = f'{sci_file} {filt_i} {band} block_reduce={_blocked}'
+        msg += f' scl={scl} scl_wht={scl_weight}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        
+        if num[band] is None:
+            num[band] = np.zeros_like(_sci)
+            den[band] = np.zeros_like(_sci)
+        
+        den_i = _wht/scl**2*scl_weight
+        num[band] += _sci*scl*den_i
         den[band] += den_i
         count[band] += 1
+
+        head[band][f'CFILE{count[band]}'] = (os.path.basename(sci_file), 
+                                         'Component file')
+        head[band][f'CSCAL{count[band]}'] = (scl,                                                                     
+                                        'Scale factor applied in combination')
+        head[band][f'CFILT{count[band]}'] = (filt_i,                                                                     
+                                         'Filter derived from the filename')
 
     # Done, make outputs
     for band in filter_combinations:
