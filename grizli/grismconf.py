@@ -988,6 +988,9 @@ def load_grism_config(conf_file, warnings=True):
     elif 'V4/NIRCAM' in conf_file:
         conf = TransformGrismconf(conf_file)
         conf.get_beams()
+    elif 'V5/NIRCAM' in conf_file:
+        conf = TransformGrismconf(conf_file)
+        conf.get_beams()
     else:
         conf = aXeConf(conf_file)
         conf.get_beams()
