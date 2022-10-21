@@ -1238,7 +1238,7 @@ def get_hst_filter(header, **kwargs):
     return result
 
 
-def parse_filter_from_header(header, filter_only=False, jwst_detector=True, **kwargs):
+def parse_filter_from_header(header, filter_only=False, jwst_detector=False, **kwargs):
     """Get simple filter name out of an HST/JWST image header.
 
     ACS has two keywords for the two filter wheels, so just return the
