@@ -126,7 +126,7 @@ class GrismDisperser(object):
                        segmentation=None, origin=[500, 500],
                        xcenter=0., ycenter=0., pad=0, grow=1, beam='A',
                        conf=['WFC3', 'F140W', 'G141'], scale=1.,
-                       fwcpos=None, MW_EBV=0., yoffset=0, xoffset=None):
+                       fwcpos=None, MW_EBV=0., yoffset=0, xoffset=None,module=None):
         """Object for computing dispersed model spectra
 
         Parameters
@@ -227,7 +227,6 @@ class GrismDisperser(object):
         """
 
         self.id = id
-
         # lower left pixel of the `direct` array in native detector
         # coordinates
         self.origin = origin
@@ -638,11 +637,11 @@ Error: `thumb` must have the same dimensions as the direct image! ({0:d},{1:d})
 
         #print('yyy PAM')
         modelf /= self.PAM_value  # = self.get_PAM_value()
-
         if not in_place:
             return modelf
         else:
             self.model = modelf.reshape(self.sh_beam)
+            
             return True
 
     def init_optimal_profile(self, seg_ids=None):
@@ -1452,10 +1451,11 @@ class ImageData(object):
             if 'PUPIL' in h:
                 pupil = h['PUPIL']
             
-            if 'MODULE' in h:
-                module = h['MODULE']
-            else:
-                module = None
+            if not module:
+                if 'MODULE' in h:
+                    module = h['MODULE']
+                else:
+                    module = None
                 
             if 'PHOTPLAM' in h:
                 photplam = h['PHOTPLAM']
@@ -2196,7 +2196,7 @@ class ImageData(object):
                               photflam=self.photflam, photplam=self.photplam,
                               origin=slice_origin, instrument=self.instrument,
                               filter=self.filter, pupil=self.pupil, 
-                              process_jwst_header=False)
+                              process_jwst_header=False,module=self.module)
 
         slice_obj.ref_photflam = self.ref_photflam
         slice_obj.ref_photplam = self.ref_photplam
@@ -2965,6 +2965,7 @@ class GrismFLT(object):
                         return False
 
                     size += 4
+                    # size += 80
 
                     # Enforce minimum size
                     # size = np.maximum(size, 16)
@@ -3943,7 +3944,8 @@ class BeamCutout(object):
             Order of the polynomial model
         """
         self.background = 0.
-        self.module = None
+        # self.module = None
+        # self.module = flt.grism.module
         
         if fits_file is not None:
             self.load_fits(fits_file, conf)
@@ -3990,6 +3992,7 @@ class BeamCutout(object):
         self.size = self.modelf.size
         self.wave = self.beam.lam
         self.sh = self.beam.sh_beam
+
 
         # Initialize for fits
         if seg_ids is None:
@@ -4093,7 +4096,6 @@ class BeamCutout(object):
                            beam=beam.beam, conf=conf, xcenter=beam.xcenter,
                            ycenter=beam.ycenter, fwcpos=flt.grism.fwcpos,
                            MW_EBV=flt.grism.MW_EBV)
-
         if hasattr(beam, 'psf_params'):
             self.beam.x_init_epsf(psf_params=beam.psf_params, psf_filter=beam.psf_filter, yoff=beam.psf_yoff)
 
@@ -4102,7 +4104,6 @@ class BeamCutout(object):
         else:
             self.compute_model(spectrum_1d=beam.spectrum_1d,
                                     is_cgs=beam.is_cgs)
-
         slx_thumb = slice(self.beam.origin[1],
                           self.beam.origin[1]+self.beam.sh[1])
 
@@ -4138,15 +4139,15 @@ class BeamCutout(object):
             file_is_open = False
             hdu = file
 
+        mod = hdu[3].header['PARENT'].split('nrc')[1][0].upper()
         self.direct = ImageData(hdulist=hdu, sci_extn=direct_extn)
-        self.grism = ImageData(hdulist=hdu, sci_extn=grism_extn)
-
+        self.grism = ImageData(hdulist=hdu, sci_extn=grism_extn,module=mod)
         self.contam = hdu['CONTAM'].data*1
         try:
             self.modelf = hdu['MODEL'].data.flatten().astype(np.float32)*1
+            
         except:
             self.modelf = self.grism['SCI'].flatten().astype(np.float32)*0.
-
         if ('REF', 1) in hdu:
             direct = hdu['REF', 1].data*1
         else:
@@ -4165,7 +4166,6 @@ class BeamCutout(object):
             direct_filter = self.grism.pupil
         else:
             direct_filter = self.direct.filter
-
         if conf is None:
             conf_args = dict(instrume=self.grism.instrument, 
                              filter=direct_filter, 
@@ -4199,7 +4199,7 @@ class BeamCutout(object):
             xoffset = h0['TXOFFSET']
         else:
             xoffset = None
-            
+
         self.beam = GrismDisperser(id=h0['ID'], direct=direct,
                                    segmentation=hdu['SEG'].data*1,
                                    origin=self.direct.origin,
@@ -4215,7 +4215,7 @@ class BeamCutout(object):
         self.direct.parent_file = h0['DPARENT']
         self.id = h0['ID']
         self.modelf = self.beam.modelf
-        
+
         # Cleanup
         if file_is_open:
             hdu.close()
