@@ -693,6 +693,10 @@ def match_lists(input, output, transform=None, scl=3600., simple=True,
         msg = '  tristars.match: Nin={0}, Nout={1}, match={2}'
         print(msg.format(len(input), len(output), len(output_ix)))
 
+        if len(output_ix) == 0:
+            print('No matches!')
+            raise ValueError('No matches!')
+
         # if False:
         #     fig = match.match_diagnostic_plot(input, output, pair_ix, tf=None, new_figure=True)
         #     fig.savefig('/tmp/xtristars.png')

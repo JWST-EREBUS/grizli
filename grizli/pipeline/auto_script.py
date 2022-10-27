@@ -4141,6 +4141,7 @@ def make_filter_combinations(root, weight_fnu=2, filter_combinations=FILTER_COMB
 
     sci_files = glob.glob('{0}-[cf]*sci.fits*'.format(root))
     sci_files.sort()
+    print('sci_files: {0}'.format(sci_files))
     
     for _isci, sci_file in enumerate(sci_files):
         #filt_i = sci_file.split('_dr')[0].split('-')[-1]
@@ -4190,10 +4191,16 @@ def make_filter_combinations(root, weight_fnu=2, filter_combinations=FILTER_COMB
             head[band] = im_i[0].header.copy()
         else:
             for k in im_i[0].header:
-                head[band][k] = im_i[0].header[k]
+                try:
+                    head[band][k] = im_i[0].header[k]
+                except Exception as e:
+                    pass
                 
             for k in ref_h_i:
-                head[band][k] = ref_h_i[k]
+                try:
+                    head[band][k] = ref_h_i[k]
+                except Exception as e:
+                    pass
         
         scl = photflam/ref_photflam
         if weight_fnu:
