@@ -4193,14 +4193,14 @@ def make_filter_combinations(root, weight_fnu=2, filter_combinations=FILTER_COMB
                 try:
                     head[band][k] = im_i[0].header[k]
                 except Exception as e:
-                    print('Cannot copy header keyword {0}: {1}. Try to append a card.'.format(k, e))
+                    # print('Cannot copy header keyword {0}: {1}. Try to append a card.'.format(k, e))
                     pass
                 
             for k in ref_h_i:
                 try:
                     head[band][k] = ref_h_i[k]
                 except Exception as e:
-                    print('Cannot copy header keyword {0}: {1}. Try to append a card.'.format(k, e))
+                    # print('Cannot copy header keyword {0}: {1}. Try to append a card.'.format(k, e))
                     pass
         
         scl = photflam/ref_photflam
