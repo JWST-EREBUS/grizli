@@ -6314,6 +6314,7 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
 
                     out_fp.append(footprints[j])
 
+            files = list(np.unique(files)) # Remove duplicates
             print(group['product'], len(files), len(group['files']))
             group['files'] = files
             group['footprints'] = out_fp
@@ -6468,10 +6469,12 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
             crbit = kwargs['crbit']
         else:
             crbit = 4096+2048
-            
+
+        input_files = list(np.unique(group['files'])) # remove duplicates  
+        print(f'{len(input_files)} files for final drizzle')
         # Fetch files from aws
         if 'reference' in group:
-            AstroDrizzle(group['files'], output=group['product'],
+            AstroDrizzle(input_files, output=group['product'],
                      clean=True, context=context, preserve=False,
                      skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
                      driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,
@@ -6489,7 +6492,7 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
                      static=(static & (len(inst_keys) == 1)), 
                      gain=gain, rdnoise=rdnoise)
         else:
-            AstroDrizzle(group['files'], output=group['product'],
+            AstroDrizzle(input_files, output=group['product'],
                      clean=True, context=context, preserve=False,
                      skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
                      driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,driz_sep_pixfrac=pixfrac,drizzle_sep_bits=False,
