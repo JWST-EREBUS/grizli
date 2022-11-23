@@ -6448,6 +6448,7 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
         
         if 'gain' in kwargs:
             gain = kwargs['gain']
+            print('### Gain: {0}'.format(gain))
         elif isJWST:
             gain = '1.0'
         else:
@@ -6455,6 +6456,7 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
             
         if 'rdnoise' in kwargs:
             rdnoise = kwargs['rdnoise']
+            print('### Read noise: {0}'.format(rdnoise))
         elif isJWST:
             rdnoise = '0.0'
         else:
@@ -6462,18 +6464,26 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
 
         if 'combine_type' in kwargs:
             combine_type = kwargs['combine_type']
+            print('### Combine type: {0}'.format(combine_type))
         else:
             combine_type = 'median'
         
         if 'crbit' in kwargs:
             crbit = kwargs['crbit']
+            print('### CR bit: {0}'.format(crbit))
         else:
             crbit = 4096+2048
+
+        align_north = True
+        if 'align_north' in kwargs:
+            align_north = kwargs['align_north']
+            final_rot = None
+            print('### Whether to Align North: {0}\n'.format(align_north))
 
         input_files = list(np.unique(group['files'])) # remove duplicates  
         print(f'{len(input_files)} files for final drizzle')
         # Fetch files from aws
-        if 'reference' in group:
+        if ('reference' in group) & (align_north):
             AstroDrizzle(input_files, output=group['product'],
                      clean=True, context=context, preserve=False,
                      skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
@@ -6492,10 +6502,11 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
                      static=(static & (len(inst_keys) == 1)), 
                      gain=gain, rdnoise=rdnoise)
         else:
+            print('### Run final drizzle without reference, final_rot={0}'.format(final_rot))
             AstroDrizzle(input_files, output=group['product'],
                      clean=True, context=context, preserve=False,
                      skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
-                     driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,driz_sep_pixfrac=pixfrac,drizzle_sep_bits=False,
+                     driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,driz_sep_pixfrac=pixfrac,driz_sep_bits=bits,
                      median=run_driz_cr, blot=run_driz_cr,
                      driz_cr=run_driz_cr,
                      driz_cr_snr=driz_cr_snr, driz_cr_scale=driz_cr_scale,
