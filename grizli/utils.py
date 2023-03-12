@@ -2,6 +2,7 @@
 Dumping ground for general utilities
 """
 import os
+import shutil
 import glob
 import inspect
 from collections import OrderedDict
@@ -17,7 +18,7 @@ import numpy as np
 
 import astropy.units as u
 
-from sregion import SRegion
+from sregion import SRegion, patch_from_polygon
 
 from . import GRIZLI_PATH
 
@@ -133,7 +134,7 @@ JWST_TRANSLATE = {'RA_TARG':'TARG_RA',
                   'EXPTIME':'EFFEXPTM',
                   'PA_V3':'ROLL_REF'}
 
-def get_flt_info(files=[], columns=['FILE', 'FILTER', 'PUPIL', 'INSTRUME', 'DETECTOR', 'TARGNAME', 'DATE-OBS', 'TIME-OBS', 'EXPSTART', 'EXPTIME', 'PA_V3', 'RA_TARG', 'DEC_TARG', 'POSTARG1', 'POSTARG2'], translate=JWST_TRANSLATE, defaults={'PUPIL':'---', 'PA_V3':0.0}, jwst_detector=True):
+def get_flt_info(files=[], columns=['FILE', 'FILTER', 'PUPIL', 'INSTRUME', 'DETECTOR', 'TARGNAME', 'DATE-OBS', 'TIME-OBS', 'EXPSTART', 'EXPTIME', 'PA_V3', 'RA_TARG', 'DEC_TARG', 'POSTARG1', 'POSTARG2'], translate=JWST_TRANSLATE, defaults={'PUPIL':'---', 'TARGNAME':'indef','PA_V3':0.0}, jwst_detector=True):
     """Extract header information from a list of FLT files
 
     Parameters
@@ -322,7 +323,7 @@ def blot_nearest_exact(in_data, in_wcs, out_wcs, verbose=True, stepsize=-1,
         scales (out**2/in**2), i.e., the pixel areas.
 
     wcs_mask : bool
-        Use fast WCS masking.  If False, use `pyregion`.
+        Use fast WCS masking.  If False, use ``regions``.
 
     fill_value : int/float
         Value in `out_data` not covered by `in_data`.
@@ -333,8 +334,8 @@ def blot_nearest_exact(in_data, in_wcs, out_wcs, verbose=True, stepsize=-1,
         Blotted data.
 
     """
+    from regions import Regions
     from shapely.geometry import Polygon
-    import pyregion
     import scipy.ndimage as nd
     from drizzlepac import cdriz
 
@@ -383,9 +384,9 @@ def blot_nearest_exact(in_data, in_wcs, out_wcs, verbose=True, stepsize=-1,
         mask = out_xy_path.contains_points(pts).reshape(out_sh)
     else:
         olap_poly = np.array(olap.exterior.xy)
-        poly_reg = "fk5\npolygon("+','.join(['{0}'.format(p) for p in olap_poly.T.flatten()])+')\n'
-        reg = pyregion.parse(poly_reg)
-        mask = reg.get_mask(header=to_header(out_wcs), shape=out_sh)
+        poly_reg = "fk5\npolygon("+','.join(['{0}'.format(p + 1) for p in olap_poly.T.flatten()])+')\n'
+        reg = Regions.parse(poly_reg, format='ds9')[0]
+        mask = reg.to_mask().to_image(shape=out_sh)
 
     #yp, xp = np.indices(in_data.shape)
     #xi, yi = xp[mask], yp[mask]
@@ -1873,50 +1874,72 @@ def get_line_wavelengths():
     line_ratios = OrderedDict()
 
     # Paschen: https://www.gemini.edu/sciops/instruments/nearir-resources/astronomical-lines/h-lines
+    
+    # Rh = 0.0010967757
+    # k = Rh * (1/n0**2 - 1/n**2)
+    # wave = 1./k # Angstroms
+    
+    # Pfund n0=5
+    line_wavelengths['PfA'] = [74598.8]
+    line_ratios['PfA'] = [1.]
+    line_wavelengths['PfB'] = [46537.9]
+    line_ratios['PfB'] = [1.]
+    line_wavelengths['PfG'] = [37405.7]
+    line_ratios['PfG'] = [1.]
+    line_wavelengths['PfD'] = [32970.0]
+    line_ratios['PfD'] = [1.]
+    line_wavelengths['PfE'] = [30392.1]
+    line_ratios['PfE'] = [1.]
+    
+    # Brackett n0=4
     line_wavelengths['BrA'] = [40522.8]
     line_ratios['BrA'] = [1.]
-    line_wavelengths['BrB'] = [26258.7]
+    line_wavelengths['BrB'] = [26258.8]
     line_ratios['BrB'] = [1.]
-    line_wavelengths['BrG'] = [21661.178]
+    line_wavelengths['BrG'] = [21661.3]
     line_ratios['BrG'] = [1.]
-    line_wavelengths['PfG'] = [37405.76]
-    line_ratios['PfG'] = [1.]
-    line_wavelengths['PfD'] = [32969.8]
-    line_ratios['PfD'] = [1.]
-    line_wavelengths['PaA'] = [18751.0]
+    line_wavelengths['BrD'] = [19451.0]
+    line_ratios['BrD'] = [1.]
+    line_wavelengths['BrE'] = [18179.2]
+    line_ratios['BrE'] = [1.]
+    
+    # Paschen n0=3
+    line_wavelengths['PaA'] = [18756.3]
     line_ratios['PaA'] = [1.]
-    line_wavelengths['PaB'] = [12821.6]
+    line_wavelengths['PaB'] = [12821.7]
     line_ratios['PaB'] = [1.]
-    line_wavelengths['PaG'] = [10941.1]
+    line_wavelengths['PaG'] = [10941.2]
     line_ratios['PaG'] = [1.]
-    line_wavelengths['PaD'] = [10049.0]
+    line_wavelengths['PaD'] = [10052.2]
     line_ratios['PaD'] = [1.]
-
-    line_wavelengths['Ha'] = [6564.61]
+    line_wavelengths['Pa8'] = [9548.65]
+    line_ratios['Pa8'] = [1.]
+    line_wavelengths['Pa9'] = [9231.60]
+    line_ratios['Pa9'] = [1.]
+    line_wavelengths['Pa10'] = [9017.44]
+    line_ratios['Pa10'] = [1.]
+    
+    # Balmer n0=2
+    line_wavelengths['Ha'] = [6564.697]
     line_ratios['Ha'] = [1.]
-    line_wavelengths['Hb'] = [4862.71]
+    line_wavelengths['Hb'] = [4862.738]
     line_ratios['Hb'] = [1.]
-    line_wavelengths['Hg'] = [4341.692]
+    line_wavelengths['Hg'] = [4341.731]
     line_ratios['Hg'] = [1.]
-    line_wavelengths['Hd'] = [4102.892]
+    line_wavelengths['Hd'] = [4102.936]
     line_ratios['Hd'] = [1.]
 
-    line_wavelengths['H7'] = [3971.198]
+    line_wavelengths['H7'] = [3971.236]
     line_ratios['H7'] = [1.]
-
-    line_wavelengths['H8'] = [3890.166]
+    line_wavelengths['H8'] = [3890.191]
     line_ratios['H8'] = [1.]
-
-    line_wavelengths['H9'] = [3836.485]
+    line_wavelengths['H9'] = [3836.511]
     line_ratios['H9'] = [1.]
-
-    line_wavelengths['H10'] = [3798.987]
+    line_wavelengths['H10'] = [3799.014]
     line_ratios['H10'] = [1.]
-
-    line_wavelengths['H11'] = [3771.70]
+    line_wavelengths['H11'] = [3771.739]
     line_ratios['H11'] = [1.]
-
-    line_wavelengths['H12'] = [3751.22]
+    line_wavelengths['H12'] = [3751.255]
     line_ratios['H12'] = [1.]
 
     # Groves et al. 2011, Table 1
@@ -2051,6 +2074,12 @@ def get_line_wavelengths():
     line_ratios['HeI-3889'] = [1.]
     line_wavelengths['HeI-1083'] = [10832.057, 10833.306]
     line_ratios['HeI-1083'] = [1., 1.]
+    line_wavelengths['HeI-6678'] = [6678.10]
+    line_ratios['HeI-6678'] = [1.]
+    line_wavelengths['HeI-7065'] = [7067.1]
+    line_ratios['HeI-7065'] = [1.]
+    line_wavelengths['HeI-8446'] = [8446.7]
+    line_ratios['HeI-8446'] = [1.]
 
     # Osterbrock Table 4.5
     # -> N=4
@@ -4444,10 +4473,9 @@ class WCSFootprint(object):
 
     def get_patch(self, **kwargs):
         """
-        `~descartes.PolygonPatch` object
+        `~matplotlib.pach.PathPatch` object
         """
-        from descartes import PolygonPatch
-        return PolygonPatch(self.polygon, **kwargs)
+        return patch_from_polygon(self.polygon, **kwargs)
 
 
     @property
@@ -4864,6 +4892,11 @@ def to_header(wcs, add_naxis=True, relax=True, key=None):
             cd = k.replace('PC', 'CD')
             header.rename_keyword(k, cd)
     
+    if hasattr(wcs.wcs, 'cd'):
+        for i in [0,1]:
+            for j in [0,1]:
+                header[f'CD{i+1}_{j+1}'] = wcs.wcs.cd[i][j]
+                
     if hasattr(wcs, 'sip'):
         if hasattr(wcs.sip, 'crpix'):
             header['SIPCRPX1'], header['SIPCRPX2'] = wcs.sip.crpix
@@ -4949,8 +4982,8 @@ def make_wcsheader(ra=40.07293, dec=-1.6137748, size=2, pixscale=0.1, get_hdu=Fa
         npix = np.cast[int](np.round([size[0]/pixscale, size[1]/pixscale]))
 
     hout = pyfits.Header()
-    hout['CRPIX1'] = npix[0]/2+1
-    hout['CRPIX2'] = npix[1]/2+1
+    hout['CRPIX1'] = (npix[0]-1)/2+1
+    hout['CRPIX2'] = (npix[1]-1)/2+1
     hout['CRVAL1'] = ra
     hout['CRVAL2'] = dec
     hout['CD1_1'] = -cdelt[0]
@@ -5006,12 +5039,11 @@ def get_flt_footprint(flt_file, extensions=[1, 2, 3, 4], patch_args=None):
 
     Returns
     -------
-    fp / patch : `~shapely.geometry` object or `~descartes.PolygonPatch`
+    fp / patch : `~shapely.geometry` object or `matplotlib.patch.Patch`
         The footprint or footprint patch.
 
     """
     from shapely.geometry import Polygon
-    from descartes import PolygonPatch
 
     im = pyfits.open(flt_file)
     fp = None
@@ -5030,13 +5062,13 @@ def get_flt_footprint(flt_file, extensions=[1, 2, 3, 4], patch_args=None):
     im.close()
     
     if patch_args is not None:
-        patch = PolygonPatch(fp, **patch_args)
+        patch = patch_from_polygon(fp, **patch_args)
         return patch
     else:
         return fp
 
 
-def make_maximal_wcs(files, pixel_scale=0.1, get_hdu=True, pad=90, verbose=True, theta=0, poly_buffer=1./3600, nsci_extensions=4):
+def make_maximal_wcs(files, pixel_scale=None, get_hdu=True, pad=90, verbose=True, theta=0, poly_buffer=1./3600, nsci_extensions=4):
     """
     Compute an ImageHDU with a footprint that contains all of `files`
 
@@ -5046,7 +5078,8 @@ def make_maximal_wcs(files, pixel_scale=0.1, get_hdu=True, pad=90, verbose=True,
         List of HST FITS files (e.g., FLT.) or WCS objects.
 
     pixel_scale : float
-        Pixel scale of output WCS, in `~astropy.units.arcsec`.
+        Pixel scale of output WCS, in `~astropy.units.arcsec`.  If `None`,
+        get pixel scale of first file in `files`.
 
     get_hdu : bool
         See below.
@@ -5073,7 +5106,6 @@ def make_maximal_wcs(files, pixel_scale=0.1, get_hdu=True, pad=90, verbose=True,
     """
     import numpy as np
     from shapely.geometry import Polygon
-    #from descartes import PolygonPatch
 
     import astropy.io.fits as pyfits
     import astropy.wcs as pywcs
@@ -5094,7 +5126,10 @@ def make_maximal_wcs(files, pixel_scale=0.1, get_hdu=True, pad=90, verbose=True,
 
                     wcs = pywcs.WCS(im['SCI', ext+1].header, fobj=im)
                     wcs_list.append((wcs, file, ext))
-
+    
+    if pixel_scale is None:
+        pixel_scale = get_wcs_pscale(wcs_list[0][0])
+        
     group_poly = None
     for i, (wcs, file, chip) in enumerate(wcs_list):
         p_i = Polygon(wcs.calc_footprint())
@@ -5111,7 +5146,11 @@ def make_maximal_wcs(files, pixel_scale=0.1, get_hdu=True, pad=90, verbose=True,
                  
         x0, y0 = np.cast[float](group_poly.centroid.xy)[:, 0]
         if verbose:
-            print('{0:>3d}/{1:>3d}: {2}[SCI,{3}]  {4:>6.2f}'.format(i, len(files), file, chip+1, group_poly.area*3600*np.cos(y0/180*np.pi)))
+            msg = '{0:>3d}/{1:>3d}: {2}[SCI,{3}]  {4:>6.2f}'
+            print(msg.format(i, len(files), file, chip+1,
+                             group_poly.area*3600*np.cos(y0/180*np.pi)
+                             )
+                  )
 
     px = np.cast[float](group_poly.convex_hull.boundary.xy).T
     #x0, y0 = np.cast[float](group_poly.centroid.xy)[:,0]
@@ -5135,9 +5174,14 @@ def make_maximal_wcs(files, pixel_scale=0.1, get_hdu=True, pad=90, verbose=True,
     size = np.maximum(sx+pad, sy+pad)
 
     if verbose:
-        print('\n  Mosaic WCS: ({0:.5f},{1:.5f})  {2:.1f}\'x{3:.1f}\'  {4:.3f}"/pix\n'.format(x0[0], x0[1], (sx+pad)/60., (sy+pad)/60., pixel_scale))
+        msg = '\n  Mosaic WCS: ({0:.5f},{1:.5f}) '
+        msg += '{2:.1f}\'x{3:.1f}\'  {4:.3f}"/pix\n'
+        print(msg.format(x0[0], x0[1], (sx+pad)/60., (sy+pad)/60., pixel_scale))
 
-    out = make_wcsheader(ra=x0[0], dec=x0[1], size=(sx+pad*2, sy+pad*2), pixscale=pixel_scale, get_hdu=get_hdu, theta=theta/np.pi*180)
+    out = make_wcsheader(ra=x0[0], dec=x0[1],
+                         size=(sx+pad*2, sy+pad*2),
+                         pixscale=pixel_scale,
+                         get_hdu=get_hdu, theta=theta/np.pi*180)
 
     return out
 
@@ -5409,7 +5453,7 @@ def niriss_ghost_mask(im, init_thresh=0.05, init_sigma=3, final_thresh=0.01, fin
     return ghost_mask
 
 
-def get_photom_scale(header):
+def get_photom_scale(header, verbose=True):
     """
     Get tabulated scale factor
     
@@ -5432,6 +5476,8 @@ def get_photom_scale(header):
     import yaml
     if 'TELESCOP' in header:
         if header['TELESCOP'] not in ['JWST']:
+            msg = f"get_photom_scale: TELESCOP={header['TELESCOP']} is not 'JWST'"
+            log_comment(LOGFILE, msg, verbose=verbose)
             return header['TELESCOP'], 1.0
     else:
         return None, 1.0
@@ -5440,15 +5486,17 @@ def get_photom_scale(header):
                              'data/photom_correction.yml')
     
     if not os.path.exists(corr_file):
+        msg = f'{corr_file} not found.'
+        log_comment(LOGFILE, msg, verbose=verbose)
         return None, 1
     
     with open(corr_file) as fp:
         corr = yaml.load(fp, Loader=yaml.SafeLoader)
-    
-    print(header['CRDS_CTX'], corr['CRDS_CTX_MAX'], corr_file)
-    
+        
     if 'CRDS_CTX' in header:
         if header['CRDS_CTX'] > corr['CRDS_CTX_MAX']:
+            msg = f"get_photom_scale {corr_file}: {header['CRDS_CTX']} > {corr['CRDS_CTX_MAX']}"
+            log_comment(LOGFILE, msg, verbose=verbose)
             return header['CRDS_CTX'], 1.0
             
     key = '{0}-{1}'.format(header['DETECTOR'], header['FILTER'])
@@ -5456,17 +5504,24 @@ def get_photom_scale(header):
         key += '-{0}'.format(header['PUPIL'])
     
     if key not in corr:
+        msg = f"get_photom_scale {corr_file}: {key} not found"
+        log_comment(LOGFILE, msg, verbose=verbose)
+        
         return key, 1.0
     
     else:
+        msg = f"get_photom_scale {corr_file}: Scale {key} by {1./corr[key]:.3f}"
+        log_comment(LOGFILE, msg, verbose=verbose)
+        
         return key, 1./corr[key]
 
 
-def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
+def drizzle_from_visit(visit, output=None, pixfrac=1., kernel='point',
                        clean=True, include_saturated=True, keep_bits=None,
                        dryrun=False, skip=None, extra_wfc3ir_badpix=True,
                        verbose=True,
                        scale_photom=True,
+                       calc_wcsmap=False,
                        niriss_ghost_kwargs={}):
     """
     Make drizzle mosaic from exposures in a visit dictionary
@@ -5477,7 +5532,8 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
         Visit dictionary with 'product' and 'files' keys
     
     output : `~astropy.wcs.WCS`, `~astropy.io.fits.Header`, `~astropy.io.ImageHDU`
-        Output frame definition.  Can be a WCS object, header, or FITS HDU
+        Output frame definition.  Can be a WCS object, header, or FITS HDU.  If
+        None, then generates a WCS with `grizli.utils.make_maximal_wcs`
     
     pixfrac : float
         Drizzle `pixfrac`
@@ -5535,19 +5591,27 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
     import boto3
     from botocore.exceptions import ClientError
     import scipy.ndimage as nd
-    
+    from astropy.io.fits import PrimaryHDU, ImageHDU
     from .version import __version__ as grizli__version
     
     bucket_name = None
     s3 = boto3.resource('s3')
     s3_client = boto3.client('s3')
-
+    
+    
     if isinstance(output, pywcs.WCS):
         outputwcs = output
     elif isinstance(output, pyfits.Header):
         outputwcs = pywcs.WCS(output)
-    elif isinstance(output, pyfits.PrimaryHDU) | isinstance(output, pyfits.ImageHDU):
+    elif isinstance(output, PrimaryHDU) | isinstance(output, ImageHDU):
         outputwcs = pywcs.WCS(output.header)
+    elif output is None:
+        _hdu = make_maximal_wcs(files=visit['files'],
+                                pixel_scale=None,
+                                get_hdu=True,
+                                verbose=False,
+                                pad=4)
+        outputwcs = pywcs.WCS(_hdu.header)
     else:
         return None
 
@@ -5560,12 +5624,14 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
     count = 0
 
     ref_photflam = None
-
+    
     indices = []
-
     for i in range(len(visit['files'])):
-        olap = visit['footprints'][i].intersection(output_poly)
-        if olap.area > 0:
+        if 'footprints' in visit:
+            olap = visit['footprints'][i].intersection(output_poly)
+            if olap.area > 0:
+                indices.append(i)
+        else:
             indices.append(i)
 
     if skip is not None:
@@ -5633,15 +5699,18 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
             _inst = flt[0].header['INSTRUME']
             if (extra_wfc3ir_badpix) & (_inst in ['NIRCAM']):
                 _det = flt[0].header['DETECTOR']
-                bpfile = os.path.join(os.path.dirname(__file__), 
-                           f'data/nrc_lowpix_0916_{_det}.fits.gz')
+                bpfiles = [os.path.join(os.path.dirname(__file__), 
+                           f'data/nrc_badpix_230120_{_det}.fits.gz')]
+                bpfiles += [os.path.join(os.path.dirname(__file__), 
+                           f'data/nrc_lowpix_0916_{_det}.fits.gz')]
                 
-                if os.path.exists(bpfile):
-                    bpdata = pyfits.open(bpfile)[0].data
-                    #bpdata = nd.binary_dilation(bpdata > 0, iterations=2)*1024
-                    bpdata = nd.binary_dilation(bpdata > 0)*1024
-                    msg = f'Use extra badpix in {bpfile}'
-                    log_comment(LOGFILE, msg, verbose=verbose)
+                for bpfile in bpfiles:
+                    if os.path.exists(bpfile):
+                        bpdata = pyfits.open(bpfile)[0].data
+                        bpdata = nd.binary_dilation(bpdata > 0)*1024
+                        msg = f'Use extra badpix in {bpfile}'
+                        log_comment(LOGFILE, msg, verbose=verbose)
+                        break
             else:
                 bpdata = np.zeros(flt['SCI'].data.shape, dtype=int)
                 
@@ -5683,7 +5752,8 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
             bits |= keep_bits
         
         if scale_photom:
-            _key, _scale_photom = get_photom_scale(flt[0].header)
+            _key, _scale_photom = get_photom_scale(flt[0].header, 
+                                                   verbose=verbose)
         else:
             _scale_photom = 1.0
         
@@ -5700,11 +5770,19 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
 
                 h = flt[('SCI', ext)].header
                 if 'MDRIZSKY' in h:
-                    sky = h['MDRIZSKY']
+                    sky_value = h['MDRIZSKY']
                 else:
-                    sky = 0
+                    sky_value = 0
                 
-                msg = '  ext (SCI,{0}), sky={1:.3f}'.format(ext, sky)
+                if ('BKG',ext) in flt:
+                    has_bkg = True
+                    sky = flt['BKG',ext].data + sky_value
+                else:
+                    has_bkg = False
+                    sky = sky_value
+                    
+                msg = f'  ext (SCI,{ext}), sky={sky_value:.3f}'
+                msg += f' has_bkg:{has_bkg}'
                 log_comment(LOGFILE, msg, verbose=verbose)
                 
                 if h['BUNIT'] == 'ELECTRONS':
@@ -5792,7 +5870,7 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
             res = drizzle_array_groups(sci_list, wht_list, wcs_list,
                                      outputwcs=outputwcs,
                                      scale=0.1, kernel=kernel,
-                                     pixfrac=pixfrac, calc_wcsmap=False,
+                                     pixfrac=pixfrac, calc_wcsmap=calc_wcsmap,
                                      verbose=verbose, data=None)
 
             outsci, outwht, outctx, header, xoutwcs = res
@@ -5813,7 +5891,7 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
             res = drizzle_array_groups(sci_list, wht_list, wcs_list,
                                      outputwcs=outputwcs,
                                      scale=0.1, kernel=kernel,
-                                     pixfrac=pixfrac, calc_wcsmap=False,
+                                     pixfrac=pixfrac, calc_wcsmap=calc_wcsmap,
                                      verbose=verbose, data=data)
 
             outsci, outwht, outctx = res[:3]
@@ -5977,7 +6055,7 @@ class WCSMapAll:
         self.output = copy.deepcopy(output)
         #self.output = output
 
-        self.origin = origin
+        self.origin = 1 #origin
         self.shift = None
         self.rot = None
         self.scale = None
@@ -6096,7 +6174,7 @@ def symlink_templates(force=False):
 
     if (not os.path.exists(out_path)) | force:
         if os.path.exists(out_path):  # (force)
-            os.remove(out_path)
+            shutil.rmtree(out_path)
 
             os.symlink(templates_path, out_path)
             print('Symlink: {0} -> {1}'.format(templates_path, out_path))

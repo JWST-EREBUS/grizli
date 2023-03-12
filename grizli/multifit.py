@@ -1158,7 +1158,7 @@ class GroupFLT():
             flt.grism.header['BKGBH'] = bh, 'sep background bh'
 
 
-    def subtract_median_filter(self, filter_size=71, filter_central=10, revert=True, filter_footprint=None, subtract_model=False):
+    def subtract_median_filter(self, filter_size=71, filter_central=10, revert=True, filter_footprint=None, subtract_model=False, second_pass_filtering=False, box_filter_sn=3, box_filter_width=3):
         """
         Remove a median filter calculated along the dispersion axis
         """
@@ -1213,6 +1213,37 @@ class GroupFLT():
                                                footprint=filter_footprint)
                 
                 filter_sci[~np.isfinite(filter_sci)] = 0
+
+            if second_pass_filtering:
+                if nbutils is None:
+                    # need numba installed
+                    msg = 'subtract_median_filter: `numba` not found, skip second filter pass.'
+                    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                else:
+                    # run filter again, but mask pixels that show significant residuals (e.g. strong emission lines)
+                    msg = f'subtract_median_filter: rerun filtering masking '
+                    msg += f' S/N>{box_filter_sn} pixels in residual'
+                    utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+                    # first do some binning/box filtering to identify significantly detected lines in individual exposures
+                    box_filter_footprint = np.ones((box_filter_width, box_filter_width), 
+                                                    dtype=int)
+                    box_filter_clean = nd.generic_filter(sci_i-filter_sci,
+                                                    nbutils.nansum,
+                                                    footprint=box_filter_footprint)
+                    box_filter_err = box_filter_width*nd.generic_filter(err_i,
+                                                    nbutils.nanmean,
+                                                    footprint=box_filter_footprint)                                                
+
+                    # mask pixels that have S/N>filter_sn after median filtering
+                    okmask = (ok) & ~(box_filter_clean/box_filter_err > box_filter_sn)
+                    
+                    sci_i[~okmask] = np.nan
+                    filter_sci = nd.generic_filter(sci_i,
+                                                nbutils.nanmedian,
+                                                footprint=filter_footprint)
+                    
+                    filter_sci[~np.isfinite(filter_sci)] = 0   
                 
             flt.grism.data['SCI'] -= filter_sci*ok
             flt.grism.data['MED'] = filter_sci*ok
@@ -3474,7 +3505,7 @@ class MultiBeam(GroupFitter):
 
                             #print('Mask 4959!')
                             beam.extra_lines += lcontam
-
+                
                 hdu = drizzle_to_wavelength(self.beams, ra=self.ra,
                                             dec=self.dec, wave=line_wave_obs,
                                             fcontam=self.fcontam,
@@ -4787,9 +4818,7 @@ def drizzle_2d_spectrum(beams, data=None, wlimit=[1.05, 1.75], dlam=50,
     return hdul
 
 
-def drizzle_to_wavelength(beams, wcs=None, ra=0., dec=0., wave=1.e4, size=5,
-                          pixscale=0.1, pixfrac=0.6, kernel='square',
-                          direct_extension='REF', fcontam=0.2, ds9=None):
+def drizzle_to_wavelength(beams, wcs=None, ra=0., dec=0., wave=1.e4, size=5, pixscale=0.1, pixfrac=0.6, kernel='square', theta=0., direct_extension='REF', fcontam=0.2, ds9=None):
     """Drizzle a cutout at a specific wavelength from a list of `~grizli.model.BeamCutout` objects
 
     Parameters
@@ -4814,7 +4843,10 @@ def drizzle_to_wavelength(beams, wcs=None, ra=0., dec=0., wave=1.e4, size=5,
 
     kernel : str, ('square' or 'point')
         Drizzle kernel to use
-
+    
+    theta : float
+        Position angle of output WCS
+    
     direct_extension : str, ('SCI' or 'REF')
         Extension of ``self.direct.data`` do drizzle for the thumbnail
 
@@ -4846,14 +4878,18 @@ def drizzle_to_wavelength(beams, wcs=None, ra=0., dec=0., wave=1.e4, size=5,
     adrizzle.log.setLevel('ERROR')
     drizzler = adrizzle.do_driz
     dfillval = 0
-
+        
     # Nothing to do
     if len(beams) == 0:
         return False
 
     # Get output header and WCS
     if wcs is None:
-        header, output_wcs = utils.make_wcsheader(ra=ra, dec=dec, size=size, pixscale=pixscale, get_hdu=False)
+        header, output_wcs = utils.make_wcsheader(ra=ra, dec=dec,
+                                                  size=size,
+                                                  theta=theta,
+                                                  pixscale=pixscale,
+                                                  get_hdu=False)
     else:
         output_wcs = wcs.copy()
         if not hasattr(output_wcs, 'pscale'):
@@ -4976,24 +5012,30 @@ def drizzle_to_wavelength(beams, wcs=None, ra=0., dec=0., wave=1.e4, size=5,
             beam_continuum /= sens
 
         # Go drizzle
-
+        
         # Contamination-cleaned
         drizzler(beam_data, beam_wcs, wht, output_wcs,
                          outsci, outwht, outctx, 1., 'cps', 1,
                          wcslin_pscale=beam.grism.wcs.pscale, uniqid=1,
-                         pixfrac=pixfrac, kernel=kernel, fillval=dfillval)
+                         pixfrac=pixfrac, kernel=kernel, fillval=dfillval,
+                         wcsmap=utils.WCSMapAll,
+                         )
 
         # Continuum
         drizzler(beam_continuum, beam_wcs, wht, output_wcs,
                          coutsci, coutwht, coutctx, 1., 'cps', 1,
                          wcslin_pscale=beam.grism.wcs.pscale, uniqid=1,
-                         pixfrac=pixfrac, kernel=kernel, fillval=dfillval)
+                         pixfrac=pixfrac, kernel=kernel, fillval=dfillval,
+                         wcsmap=utils.WCSMapAll,
+                         )
 
         # Contamination
         drizzler(beam.contam, beam_wcs, wht, output_wcs,
                          xoutsci, xoutwht, xoutctx, 1., 'cps', 1,
                          wcslin_pscale=beam.grism.wcs.pscale, uniqid=1,
-                         pixfrac=pixfrac, kernel=kernel, fillval=dfillval)
+                         pixfrac=pixfrac, kernel=kernel, fillval=dfillval,
+                         wcsmap=utils.WCSMapAll,
+                         )
 
         # Direct thumbnail
         filt_i = all_direct_filters[i]
@@ -5017,7 +5059,9 @@ def drizzle_to_wavelength(beams, wcs=None, ra=0., dec=0., wave=1.e4, size=5,
                          doutsci[filt_i], doutwht[filt_i], doutctx[filt_i],
                          1., 'cps', 1,
                          wcslin_pscale=beam.direct.wcs.pscale, uniqid=1,
-                         pixfrac=pixfrac, kernel=kernel, fillval=dfillval)
+                         pixfrac=pixfrac, kernel=kernel, fillval=dfillval,
+                         wcsmap=utils.WCSMapAll,
+                         )
 
         # Show in ds9
         if ds9 is not None:

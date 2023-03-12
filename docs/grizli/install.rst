@@ -6,7 +6,6 @@ The easiest way to install the latest ``grizli`` release into a :ref:`fresh virt
 .. code-block:: bash
 
    pip install grizli
-   pip install pyregion
 
 If you are installing ``grizli`` for the first time, make sure to also set up :ref:`directories and download 
 reference files <directories>`. If you will be working with HST data, the following will install all 
@@ -15,7 +14,6 @@ necessary libraries:
 .. code-block:: bash
 
    pip install "grizli[hst]"
-   pip install pyregion
    conda install hstcal
 
 If you will be working with JWST data, the following is the recommended installation process:
@@ -23,7 +21,6 @@ If you will be working with JWST data, the following is the recommended installa
 .. code-block:: bash
 
    pip install "grizli[jwst]"
-   pip install pyregion
 
 
 More detailed instructions are available :ref:`below <installation>`.
@@ -90,11 +87,13 @@ There are five available options for installing dependencies: ``hst``, ``jwst``,
   pip install "grizli[hst]"
 
 or 
+
 .. code-block:: bash
 
   pip install "grizli[jwst]"
 
 or
+
 .. code-block:: bash
 
   pip install "grizli[jwst,test]"
@@ -106,15 +105,9 @@ To minimize conflict of dependencies, install only the ones that you need.
 Additional dependencies
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-``pip`` will install all needed dependencies with the exception of the following which 
-need to be installed separately:
-
-.. code-block:: bash
-  
-  pip install pyregion
-  
-If you will be working with HST data, you will also need the ``hstcal`` library 
-which is only available via ``conda``:
+``pip`` will install all needed dependencies.  If you will be working with
+HST data, you will also need the ``hstcal`` library which is only available 
+via ``conda``:
 
 .. code-block:: bash
 
@@ -123,20 +116,24 @@ which is only available via ``conda``:
 ``eazy-py``
 ###########
 
+
 If you are planning to run simultaneous fits to grism spectra plus photometry using the
-`eazy-py <https://github.com/gbrammer/eazy-py>`_ connection, install ``eazy-py`` from
-the repository to ensure that you get *its* dependencies and templates.
-
-- Change directories to the location where you store code locally and activate the environment.
-
-- Fetch the ``eazy-py`` repo, change into its directory and install it. This needs to 
-only be done once, or after updating the repository:
+`eazy-py <https://github.com/gbrammer/eazy-py>`_ connection, install ``eazy-py`` 
+to ensure that you get *its* dependencies and templates.
 
 .. code-block:: bash
 
-    git clone --recurse-submodules https://github.com/gbrammer/eazy-py.git
+    git clone https://github.com/gbrammer/eazy-py.git
     cd eazy-py
-    pip install -r requirements.txt .
+    pip install .
+
+- Download the templates (in a Python interpreter):
+
+.. code-block:: python
+
+    import eazy
+    eazy.fetch_eazy_photoz()
+
 
 - Optional: Run basic tests with ``pytest``. Note that the ``pysynphot`` failure is not critical:
 

@@ -491,7 +491,11 @@ def add_wcs_log(files=None, assoc=None, remove_old=True, verbose=True):
             
         parent = os.path.basename(file).split('_wcs.log')[0]
         if remove_old:
-            db.execute(f"DELETE FROM wcs_log WHERE wcs_parent='{parent}'")
+            cmd = f"DELETE FROM wcs_log WHERE wcs_parent='{parent}'"
+            if assoc is not None:
+                cmd += f" AND wcs_assoc='{assoc}'"
+                
+            db.execute(cmd)
             
         rows = []
         
@@ -680,14 +684,14 @@ def show_recent_assoc(limit=50):
     return last
 
 
-def launch_ec2_instances(nmax=50, count=None, templ='lt-0e8c2b8611c9029eb,Version=19'):
+def launch_ec2_instances(nmax=50, count=None, templ='lt-0e8c2b8611c9029eb,Version=24'):
     """
     Launch EC2 instances from a launch template that run through all 
     status=0 associations/tiles and then terminate
     
     Version 19 is the latest run_all_visits.sh
     Version 20 is the latest run_all_tiles.sh
-    
+    Version 24 is run_all_visits with a new python39 environment
     """
 
     if count is None:
@@ -723,7 +727,7 @@ def update_visit_results():
     pass
 
 
-def get_assoc_yaml_from_s3(assoc, s_region=None, bucket='grizli-v2', prefix='HST/Pipeline/Input', write_file=True):
+def get_assoc_yaml_from_s3(assoc, s_region=None, bucket='grizli-v2', prefix='HST/Pipeline/Input', write_file=True, fetch=True):
     """
     Get presets from yaml file on s3, if found
     """
@@ -732,14 +736,18 @@ def get_assoc_yaml_from_s3(assoc, s_region=None, bucket='grizli-v2', prefix='HST
     from grizli import utils
     
     LOGFILE = f'{ROOT_PATH}/{assoc}.auto_script.log.txt'
-    
-    s3 = boto3.resource('s3')
-    s3_client = boto3.client('s3')
-    bkt = s3.Bucket(bucket)
-    
+        
     s3_prefix = os.path.join(prefix, assoc + '.yaml')
     
-    files = [obj.key for obj in bkt.objects.filter(Prefix=s3_prefix)]
+    if fetch:
+        s3 = boto3.resource('s3')
+        s3_client = boto3.client('s3')
+        bkt = s3.Bucket(bucket)
+        files = [obj.key
+                 for obj in bkt.objects.filter(Prefix=s3_prefix)]
+    else:
+        files = []
+        
     if len(files) > 0:
         local_file = os.path.basename(s3_prefix)
         bkt.download_file(s3_prefix, local_file,
@@ -1186,16 +1194,53 @@ def check_jwst_assoc_guiding(assoc):
 ALL_FILTERS = ['F410M', 'F467M', 'F547M', 'F550M', 'F621M', 'F689M', 'F763M', 'F845M', 'F200LP', 'F350LP', 'F435W', 'F438W', 'F439W', 'F450W', 'F475W', 'F475X', 'F555W', 'F569W', 'F600LP', 'F606W', 'F622W', 'F625W', 'F675W', 'F702W', 'F775W', 'F791W', 'F814W', 'F850LP', 'G800L', 'F098M', 'F127M', 'F139M', 'F153M', 'F105W', 'F110W', 'F125W', 'F140W', 'F160W', 'G102', 'G141']
 
 
-def process_visit(assoc, clean=True, sync=True, max_dt=4, combine_same_pa=False, visit_split_shift=1.2, blue_align_params=blue_align_params, ref_catalogs=['LS_DR9', 'PS1', 'DES', 'NSC', 'GAIA'], filters=None, prep_args={}, get_wcs_guess_from_table=True, master_radec='astrometry_db', **kwargs):
+def process_visit(assoc, clean=True, sync=True, max_dt=4, combine_same_pa=False, visit_split_shift=1.2, blue_align_params=blue_align_params, ref_catalogs=['LS_DR9', 'PS1', 'DES', 'NSC', 'GAIA'], filters=None, prep_args={}, fetch_args={}, get_wcs_guess_from_table=True, master_radec='astrometry_db', align_guess=None, with_db=True, **kwargs):
     """
+    Run the `grizli.pipeline.auto_script.go` pipeline on an association defined
+    in the `grizli` database.
+    
+    Parameters
+    ----------
+    assoc : str
+        File association name
+    
+    clean : bool
+        Remove all intermediate products
+    
+    sync : bool
+        Sync results to `grizli` S3 buckets and database (requires write 
+        permissions).
+    
+    prep_args : dict
+        Keyword arguments to pass in `visit_prep_args`
+    
+    fetch_args : dict
+        Keyword arguments to pass in `fetch_files_args`
+    
+    get_wcs_guess_from_table : bool
+        Query astrometry alignment guess from the archive, if available
+    
+    master_radec : str
+        Reference astrometric catalog, either a filename, ``astrometry_db``, or
+        `None`.  If ``astrometry_db``, will try to query astrometry reference
+        sources from the `grizli` database
+    
+    align_guess : [float, float]
+        Shift guess (not used)
+    
+    with_db : bool
+        Try to use the `grizli` archive.  Otherwise, get the assoc information
+        from the web API
+    
     `assoc_table.status`
     
      1 = start
      2 = finished
      9 = has failed files
     10 = no wcs.log files found, so probably nothing was done?
-         This is most often the case when visits were ignored due to 
-         abnormal EXPFLAG keywords
+         This is most often the case when HST visits were ignored due to 
+         abnormal EXPFLAG keywords or if data couldn't be downloaded due to
+         proprietary restrictions
     12 = Don't redo ever 
     
     
@@ -1208,11 +1253,17 @@ def process_visit(assoc, clean=True, sync=True, max_dt=4, combine_same_pa=False,
 
     os.chdir(f'{ROOT_PATH}/')
     
-    tab = db.SQL(f"""SELECT * FROM assoc_table
+    if with_db:
+        tab = db.SQL(f"""SELECT * FROM assoc_table
                      WHERE assoc_name='{assoc}'
                      AND status != 99
                      """)
-    
+    else:
+        _url = f'http://grizli-cutout.herokuapp.com/assoc_json?name={assoc}'
+        tab = utils.read_catalog(_url, format='pandas.json')
+        sync = False
+        get_wcs_guess_from_table = False
+        
     if len(tab) == 0:
         print(f"assoc_name='{assoc}' not found in assoc_table")
         return False
@@ -1244,7 +1295,8 @@ def process_visit(assoc, clean=True, sync=True, max_dt=4, combine_same_pa=False,
     #kws = auto_script.get_yml_parameters()
     kws = get_assoc_yaml_from_s3(assoc, bucket='grizli-v2', 
                                  prefix='HST/Pipeline/Input', 
-                                 s_region=tab['footprint'][0])
+                                 s_region=tab['footprint'][0],
+                                 fetch=with_db)
            
     kws['visit_prep_args']['reference_catalogs'] = ref_catalogs
     if filters is None:
@@ -1264,7 +1316,10 @@ def process_visit(assoc, clean=True, sync=True, max_dt=4, combine_same_pa=False,
     
     for k in prep_args:
         kws['visit_prep_args'][k] = prep_args[k]
-                
+    
+    for k in fetch_args:
+        kws['fetch_files_args'][k] = fetch_args[k]
+        
     kws['kill'] = 'preprocess'
     
     if master_radec is not None:
@@ -1336,6 +1391,7 @@ def process_visit(assoc, clean=True, sync=True, max_dt=4, combine_same_pa=False,
                   --include "Prep/*s.log" \
                   --include "Prep/*visits.*" \
                   --include "Prep/*skyflat.*" \
+                  --include "Prep/*angles.*" \
                   --include "*fail*" \
                   --include "RAW/*[nx][tg]" """
         
@@ -1385,7 +1441,7 @@ def set_private_iref(assoc):
         utils.fetch_default_calibs()
 
 
-def get_wcs_guess(assoc, verbose=True):
+def get_wcs_guess(assoc, guess=None, verbose=True):
     """
     Get visit wcs alignment from the database and use it as a "guess"
     """
@@ -1639,7 +1695,7 @@ def query_exposures(ra=53.16, dec=-27.79, size=1., pixel_scale=0.1, theta=0,  fi
     return header, wcs, SQL, res
 
 
-def cutout_mosaic(rootname='gds', product='{rootname}-{f}', ra=53.1615666, dec=-27.7910651, size=5*60, theta=0., filters=['F160W'], ir_scale=0.1, ir_wcs=None, res=None, half_optical=True, kernel='point', pixfrac=0.33, make_figure=True, skip_existing=True, clean_flt=True, gzip_output=True, s3output='s3://grizli-v2/HST/Pipeline/Mosaic/', split_uvis=True, extra_query='', extra_wfc3ir_badpix=True, fix_niriss=True, scale_nanojy=10, verbose=True, niriss_ghost_kwargs={}, scale_photom=True, **kwargs):
+def cutout_mosaic(rootname='gds', product='{rootname}-{f}', ra=53.1615666, dec=-27.7910651, size=5*60, theta=0., filters=['F160W'], ir_scale=0.1, ir_wcs=None, res=None, half_optical=True, kernel='point', pixfrac=0.33, make_figure=True, skip_existing=True, clean_flt=True, gzip_output=True, s3output='s3://grizli-v2/HST/Pipeline/Mosaic/', split_uvis=True, extra_query='', extra_wfc3ir_badpix=True, fix_niriss=True, scale_nanojy=10, verbose=True, niriss_ghost_kwargs={}, scale_photom=True, calc_wcsmap=False, **kwargs):
     """
     Make mosaic from exposures defined in the exposure database
     
@@ -1817,7 +1873,8 @@ def cutout_mosaic(rootname='gds', product='{rootname}-{f}', ra=53.1615666, dec=-
                                      extra_wfc3ir_badpix=extra_wfc3ir_badpix,
                                      verbose=verbose,
                                      scale_photom=scale_photom,
-                                     niriss_ghost_kwargs=niriss_ghost_kwargs)
+                                     niriss_ghost_kwargs=niriss_ghost_kwargs,
+                                     calc_wcsmap=calc_wcsmap)
                              
         outsci, outwht, header, flist, wcs_tab = _
         

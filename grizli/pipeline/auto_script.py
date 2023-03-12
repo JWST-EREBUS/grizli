@@ -7,6 +7,7 @@ import traceback
 import glob
 import time
 import warnings
+import gc
 
 import yaml
 
@@ -251,6 +252,7 @@ def create_path_dict(root='j142724+334246', home='$PWD', raw=None, prep=None, ex
 def go(root='j010311+131615', 
        HOME_PATH='$PWD',
        RAW_PATH=None, PREP_PATH=None, PERSIST_PATH=None, EXTRACT_PATH=None,
+       CRDS_CONTEXT=None,
        filters=args['filters'],
        fetch_files_args=args['fetch_files_args'],
        inspect_ramps=False,
@@ -375,7 +377,14 @@ def go(root='j010311+131615',
     utils.LOGFILE = os.path.join(PATHS['home'], f'{root}.auto_script.log.txt')
 
     utils.log_comment(utils.LOGFILE, '### Pipeline start', show_date=True)
-
+    
+    if CRDS_CONTEXT is not None:
+        utils.log_comment(utils.LOGFILE,
+                          f"# export CRDS_CONTEXT='{CRDS_CONTEXT}'",
+                          show_date=True)
+                          
+        os.environ['CRDS_CONTEXT'] = CRDS_CONTEXT
+        
     ######################
     # Download data
     os.chdir(PATHS['home'])
@@ -881,7 +890,7 @@ def make_directories(root='j142724+334246', HOME_PATH='$PWD', paths={}):
     return paths
 
 
-def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_products={'WFPC2/WFC': ['C0M', 'C1M'], 'WFPC2/PC': ['C0M', 'C1M'], 'ACS/WFC': ['FLC'], 'WFC3/IR': ['RAW'], 'WFC3/UVIS': ['FLC']}, remove_bad=True, reprocess_parallel=False, reprocess_clean_darks=True, s3_sync=False, fetch_flt_calibs=['IDCTAB', 'PFLTFILE', 'NPOLFILE'], filters=VALID_FILTERS, min_bad_expflag=2, fetch_only=False, force_rate=True):
+def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_products={'WFPC2/WFC': ['C0M', 'C1M'], 'WFPC2/PC': ['C0M', 'C1M'], 'ACS/WFC': ['FLC'], 'WFC3/IR': ['RAW'], 'WFC3/UVIS': ['FLC']}, remove_bad=True, reprocess_parallel=False, reprocess_clean_darks=True, s3_sync=False, fetch_flt_calibs=['IDCTAB', 'PFLTFILE', 'NPOLFILE'], filters=VALID_FILTERS, min_bad_expflag=2, fetch_only=False, force_rate=True, get_rateints=False, s3path=None):
     """
     Fully automatic script
     """
@@ -958,9 +967,62 @@ def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_pr
     
     tab = tab[use_filters]
     
-    # JWST
+    # Files from s3
+    from_s3 = np.array([d.startswith('s3://') for d in tab['dataURL']])
+    
+    jw_files = []
+    
+    if s3path is not None:
+        # Prepend s3 path to filenames
+        
+        msg = f'Fetch {len(tab)} files from {s3path}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        
+        os.chdir(paths['raw'])
+        for url in tab['dataURL']:
+            s3file = os.path.join(s3path, os.path.basename(url))
+            _file = os.path.basename(s3file)
+            if os.path.exists(_file):
+                msg = f'fetch_files: {s3file} {_file} (file found)'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            else:
+                msg = f'fetch_files: {s3file} {_file}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                os.system(f'aws s3 cp {s3file} {_file}')
+            
+            if os.path.exists(_file) & _file.startswith('jw'):
+                jw_files.append(_file)
+                
+        tab = tab[:0]
+        jw &= False
+    
+    elif from_s3.sum() > 0:
+        
+        msg = f'Fetch {from_s3.sum()} files from S3'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        
+        os.chdir(paths['raw'])
+        for s3file in tab['dataURL'][from_s3]:
+            _file = os.path.basename(s3file)
+            if os.path.exists(_file):
+                msg = f'fetch_files: {s3file} {_file} (file found)'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            else:
+                msg = f'fetch_files: {s3file} {_file}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                os.system(f'aws s3 cp {s3file} {_file}')
+            
+            if os.path.exists(_file) & _file.startswith('jw'):
+                jw_files.append(_file)
+            
+        # jw &= ~from_s3
+        tab = tab[~from_s3]
+        jw &= ~from_s3
+
     if jw.sum() > 0:
-        print(f'Fetch {jw.sum()} JWST files!')
+        # JWST
+        msg = f'Fetch {jw.sum()} JWST files!'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
         os.chdir(paths['raw'])
             
@@ -970,29 +1032,40 @@ def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_pr
                 _file = os.path.basename(f).replace('nis_cal','nis_rate')
                 if not os.path.exists(_file):
                     os.system(f'aws s3 cp s3://grizli-v2/JwstDummy/{_file} .')
-            
-        else:
-            ## Download from MAST API when data available xxx            
-            _resp = mastquery.utils.download_from_mast(tab[jw], 
-                                                       force_rate=force_rate)
-            # update targname
-            for i, _file in enumerate(_resp):
-                _test = os.path.exists(_file) & (jwst_utils is not None)
-                _jwst_grism = ('_nis_rate' in _file)
-                if 'filter' in tab.colnames:
-                    _jwst_grism |= 'GRISM' in tab[jw]['filter'][i]
-                    
-                _test &= _jwst_grism
                 
-                if _test:
-                    # Need initialization here for JWST grism exposures
-                    jwst_utils.initialize_jwst_image(_file,
-                                                     oneoverf_correction=False,
-                    )
-                    jwst_utils.set_jwst_to_hst_keywords(_file, reset=True)
-                    
+                if os.path.exists(_file) & _file.startswith('jw'):
+                    jw_files.append(_file)
+                
+        else:
+            ## Download from MAST API when data available
+            mastquery.utils.LOGFILE = utils.LOGFILE   
+            _resp = mastquery.utils.download_from_mast(tab[jw],
+                                          force_rate=force_rate,
+                                          rate_ints=get_rateints)
+            
+            for i, _file in enumerate(_resp):
+                if os.path.exists(_file) & _file.startswith('jw'):
+                    jw_files.append(_file)
+
         tab = tab[~jw]
+    
+    # Initialize grism files
+    for _file in jw_files:
+        _test = os.path.exists(_file) & (jwst_utils is not None)
+        _jwst_grism = ('_nis_rate' in _file)
+        with pyfits.open(_file) as im:
+            if 'PUPIL' in im[0].header:
+                _jwst_grism |= 'GRISM' in im[0].header['PUPIL']
         
+        _test &= _jwst_grism
+    
+        if _test:
+            # Need initialization here for JWST grism exposures
+            jwst_utils.initialize_jwst_image(_file,
+                                             oneoverf_correction=False,
+                                             )
+            jwst_utils.set_jwst_to_hst_keywords(_file, reset=True)
+
     if len(tab) > 0:
         if MAST_QUERY:
             tab = query.get_products_table(tab, extensions=['RAW', 'C1M'])
@@ -2917,7 +2990,7 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
         return [grp]
 
 
-def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='../Extractions', ds9=None, refine_niter=3, gris_ref_filters=GRIS_REF_FILTERS, force_ref=None, files=None, split_by_grism=True, refine_poly_order=1, refine_fcontam=0.5, cpu_count=0, mask_mosaic_edges=True, prelim_mag_limit=25, refine_mag_limits=[18, 24], init_coeffs=[1.1, -0.5], grisms_to_process=None, pad=(64, 256), model_kwargs={'compute_size': True}, sep_background_kwargs=None, subtract_median_filter=False, median_filter_size=71, median_filter_central=10):
+def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='../Extractions', ds9=None, refine_niter=3, gris_ref_filters=GRIS_REF_FILTERS, force_ref=None, files=None, split_by_grism=True, refine_poly_order=1, refine_fcontam=0.5, cpu_count=0, mask_mosaic_edges=True, prelim_mag_limit=25, refine_mag_limits=[18, 24], init_coeffs=[1.1, -0.5], grisms_to_process=None, pad=(64, 256), model_kwargs={'compute_size': True}, sep_background_kwargs=None, subtract_median_filter=False, median_filter_size=71, median_filter_central=10, second_pass_filtering=False, box_filter_sn=3, box_filter_width=3):
     """
     Contamination model for grism exposures
     """
@@ -2955,7 +3028,10 @@ def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='.
             # and don't do any contamination modeling
             refine_niter = 0
             grp.subtract_median_filter(filter_size=median_filter_size, 
-                                       filter_central=median_filter_central)
+                                       filter_central=median_filter_central,
+                                       second_pass_filtering=second_pass_filtering, 
+                                       box_filter_sn=box_filter_sn, 
+                                       box_filter_width=box_filter_width)
             
         else:
             ################
@@ -4745,26 +4821,30 @@ def get_rgb_filters(filter_list, force_ir=False, pure_sort=False):
 
     # Preferred combinations
     filter_list_lower = [f.lower() for f in filter_list]
-    rpref = ['h', 'f160w', 'f140w','f444w-clear','f200w-clear','f410m-clear']
-    gpref = ['j', 'yj', 'f125w', 'f110w', 'f105w', 'f098m','f356w-clear',
-             'f150w-clear','f300m-clear']
+    rpref = ['h', 'f160w', 'f140w','f444w-clear','f410m-clear',
+             'f356w-clear','f277w-clear','f200w-clear','f150w-clear']
+    gpref = ['j', 'yj', 'f125w', 'f110w', 'f105w', 'f098m','f277w-clear',
+             'f356w-clear','f200w-clear'
+             'f150w-clear','f115w-clear',
+             'f410m-clear','f300m-clear',
+             ]
     bpref = ['opt', 'visr', 'visb', 'f814w', 'f814wu', 'f606w', 'f606wu',
              'f775w', 'f850lp', 'f435w',
-             'f090w-clear','f070w-clear','f115w-clear',
-             'f277w-clear',
+             'f115w-clear','f090w-clear','f070w-clear',
+             'f277w-clear','f150w-clear'
              ]
              
     pref_list = [None, None, None]
     has_pref = 0
     for i, pref in enumerate([rpref, gpref, bpref]):
         for f in pref:
-            if f in filter_list_lower:
+            if (f in filter_list_lower) & (f not in pref_list):
                 pref_list[i] = f
                 has_pref += 1
                 break
 
     if has_pref == 3:
-        print('Use preferred r/g/b combination: {0}'.format(pref_list))
+        print(f'# field_rgb - Use preferred r/g/b combination: {pref_list}')
         return pref_list
 
     for f in filter_list:
@@ -4884,16 +4964,82 @@ def get_rgb_filters(filter_list, force_ir=False, pure_sort=False):
 
 TICKPARAMS = dict(axis='both', colors='w', which='both')
 
-def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', show_ir=True, pl=1, pf=1, scl=1, scale_ab=None, rgb_scl=[1, 1, 1], ds9=None, force_ir=False, filters=None, add_labels=True, output_format='jpg', rgb_min=-0.01, xyslice=None, pure_sort=False, verbose=True, force_rgb=None, suffix='.field', mask_empty=False, tick_interval=60, timestamp=False, mw_ebv=0, use_background=False, tickparams=TICKPARAMS, fill_black=False, ref_spectrum=None, gzext='', full_dimensions=False, invert=False, get_rgb_array=False, get_images=False):
+# Good options for asinh norm_kwargs 
+ASINH_NORM =  {'stretch': 'asinh',
+               'min_cut': -0.02, 'max_cut': 1.0, 
+               'clip':True, 'asinh_a':0.03}
+
+def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', show_ir=True, pl=1, pf=1, scl=1, scale_ab=None, rgb_scl=[1, 1, 1], ds9=None, force_ir=False, filters=None, add_labels=True, output_format='jpg', rgb_min=-0.01, xyslice=None, pure_sort=False, verbose=True, force_rgb=None, suffix='.field', mask_empty=False, tick_interval=60, timestamp=False, mw_ebv=0, use_background=False, tickparams=TICKPARAMS, fill_black=False, ref_spectrum=None, gzext='', full_dimensions=False, use_imsave=True, invert=False, get_rgb_array=False, get_images=False, norm_kwargs=None):
     """
     RGB image of the field mosaics
+    
+    Parameters
+    ----------
+    
+    root : str
+        Field rootname
+    
+    xsize : float
+        Figure size
+    
+    output_dpi : int
+        Figure DPI
+    
+    HOME_PATH : str
+        Path to look for mosaic files
+    
+    show_ir : bool
+        Clip around WFC3/IR
+    
+    pl : float
+        Images are scaled by a factor `PHOTPLAM**pl`
+    
+    pf : float
+        Images are scaled by a factor `PHOTFLAM**pf`.  Flat f-nu would be
+        `pl=2`, `pf=1`.
+    
+    scl : float
+        All images are scaled by this factor
+    
+    scale_ab : float
+    
+    rgb_scl : [float, float, float]
+        Separate scaling for [r,g,b] channels
+    
+    ds9 : `grizli.ds9.DS9`
+        Load arrays in DS9
+    
+    force_ir : bool
+    
+    filters : list
+        Specific list of filters
+    
+    add_labels : bool
+        Add labels to the plot
+    
+    verbose : bool
+        Status messaging
+    
+    force_rgb : list
+        Filenames of specific [r,g,b] images
+    
+    suffix : str
+        Suffix of the output figure
+    
+    norm_kwargs : dict
+        Keyword arguments for `astropy.visualization.simple_norm`, e.g.,
+        ``{'stretch': 'asinh', 'min_cut': -0.05, 'max_cut': 0.1}``
+    
     """
 
     import matplotlib.pyplot as plt
     from matplotlib.ticker import MultipleLocator
 
+    import skimage
+
     #import montage_wrapper
     from astropy.visualization import make_lupton_rgb
+    from astropy.visualization import simple_norm
 
     try:
         from .. import utils
@@ -4901,23 +5047,27 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
         from grizli import utils
 
     if HOME_PATH is not None:
-        phot_file = '{0}/{1}/Prep/{1}_phot.fits'.format(HOME_PATH, root)
+        phot_file = f'{HOME_PATH}/{root}/Prep/{root}_phot.fits'
         if not os.path.exists(phot_file):
-            print('Photometry file {0} not found.'.format(phot_file))
+            print(f'Photometry file {phot_file} not found.')
             return False
 
         phot = utils.GTable.gread(phot_file)
-        sci_files = glob.glob('{0}/{1}/Prep/{1}-[ofuvyjh]*sci.fits{2}'.format(HOME_PATH, root, gzext))
+        PATH_TO = f'{HOME_PATH}/{root}/Prep'
+        sci_files = glob.glob(f'{PATH_TO}/{root}-[ofuvyjh]*sci.fits{gzext}')
 
-        PATH_TO = '{0}/{1}/Prep'.format(HOME_PATH, root)
     else:
         PATH_TO = './'
-        sci_files = glob.glob('./{1}-[fuvyjho]*sci.fits{2}'.format(PATH_TO, root, gzext))
+        sci_files = glob.glob(f'./{root}-[fuvyjho]*sci.fits{gzext}')
 
-    print('PATH: {0}, files:{1}'.format(PATH_TO, sci_files))
+    print(f'PATH: {PATH_TO}, files: {sci_files}')
 
     if filters is None:
-        filters = [file.split('_')[-3].split('-')[-1] for file in sci_files]
+        filters = [file.replace('-clear','xclear').replace('clear-','clearx').split('_')[-3].split('-')[-1]
+                   for file in sci_files]
+        
+        filters = [f.replace('xclear','-clear').replace('clearx','clear-')
+                   for f in filters]
         if show_ir:
             filters += ['ir']
 
@@ -4926,9 +5076,9 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
     ims = {}
     for f in filters:
         try:
-            img = glob.glob('{0}/{1}-{2}_dr?_sci.fits{3}'.format(PATH_TO, root, f, gzext))[0]
+            img = glob.glob(f'{PATH_TO}/{root}-{f}_dr?_sci.fits{gzext}')[0]
         except:
-            print('Failed: {0}/{1}-{2}_dr?_sci.fits{3}'.format(PATH_TO, root, f, gzext))
+            print(f'Failed: {PATH_TO}/{root}-{f}_dr?_sci.fits{gzext}')
 
         try:
             ims[f] = pyfits.open(img)
@@ -4954,7 +5104,8 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
     minor = MultipleLocator(tick_interval/pscale)
 
     if force_rgb is None:
-        rf, gf, bf = get_rgb_filters(filters, force_ir=force_ir, pure_sort=pure_sort)
+        rf, gf, bf = get_rgb_filters(filters, force_ir=force_ir, 
+                                     pure_sort=pure_sort)
     else:
         rf, gf, bf = force_rgb
     
@@ -4973,7 +5124,24 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
             rgb_scl = [1.4, 1., 0.35]
         elif _rgbf == ['f444w-clear', 'f356w-clear', 'f200w-clear']:
             rgb_scl = [1.4, 1., 0.35]
+        elif _rgbf == ['f444w-clear','f200w-clear','f115w-clear']:
+            rgb_scl = [2, 1.1, 1.0]
+        elif _rgbf == ['f444w-clear','f200w-clear','f115w-clear']:
+            rgb_scl = [2, 1.1, 1.0]
+        elif _rgbf == ['f356w-clear','f200w-clear','f115w-clear']:
+            rgb_scl = [2, 1.1, 1.0]
+        elif _rgbf == ['f444w-clear','f277w-clear','f115w-clear']:
+            rgb_scl = [2, 1.5, 1.0]
+        else:
+            # Mix of SW/LW: [LW=2, SW=1]
             
+            rgb_scl = [1,1,1]
+            clear = np.array(['clear' in f for f in _rgbf])
+            lw = np.array(_rgbf) > 'f260w'
+            if clear.sum() == 3:
+                rgb_scl = (lw*1+1)
+                rgb_scl = (rgb_scl/rgb_scl.min()).tolist()
+                
     logstr = '# field_rgb {0}: r {1} / g {2} / b {3}\n'
     logstr += '# field_rgb scl={7:.2f} / r {4:.2f} / g {5:.2f} / b {6:.2f}'
     logstr = logstr.format(root, *_rgbf, *rgb_scl, scl)
@@ -4993,11 +5161,12 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
     else:
         MW_F99 = None
 
-    rimg = ims[rf][0].data * (ims[rf][0].header['PHOTFLAM']/5.e-20)**pf * (ims[rf][0].header['PHOTPLAM']/1.e4)**pl*scl*rgb_scl[0]
+    rimg = ims[rf][0].data * (ims[rf][0].header['PHOTFLAM']/5.e-20)**pf
+    rimg *= (ims[rf][0].header['PHOTPLAM']/1.e4)**pl*scl*rgb_scl[0]
 
     if MW_F99 is not None:
         rmw = 10**(0.4*(MW_F99(np.array([ims[rf][0].header['PHOTPLAM']]))))[0]
-        print('MW_EBV={0:.3f}, {1}: {2:.2f}'.format(mw_ebv, rf, rmw))
+        print(f'MW_EBV={mw_ebv:.3f}, {rf}: {rmw:.2f}')
         rimg *= rmw
 
     if bf == 'sum':
@@ -5005,10 +5174,12 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
     elif bf == rf:
         bimg = rimg
     else:
-        bimg = ims[bf][0].data * (ims[bf][0].header['PHOTFLAM']/5.e-20)**pf * (ims[bf][0].header['PHOTPLAM']/1.e4)**pl*scl*rgb_scl[2]
+        bimg = ims[bf][0].data * (ims[bf][0].header['PHOTFLAM']/5.e-20)**pf 
+        bimg *= (ims[bf][0].header['PHOTPLAM']/1.e4)**pl*scl*rgb_scl[2]
         if MW_F99 is not None:
-            bmw = 10**(0.4*(MW_F99(np.array([ims[bf][0].header['PHOTPLAM']]))))[0]
-            print('MW_EBV={0:.3f}, {1}: {2:.2f}'.format(mw_ebv, bf, bmw))
+            plam = ims[bf][0].header['PHOTPLAM']
+            bmw = 10**(0.4*(MW_F99(np.array([plam]))))[0]
+            print(f'MW_EBV={mw_ebv:.3f}, {bf}: {bmw:.2f}')
             bimg *= bmw
     
     # Double-acs
@@ -5029,8 +5200,9 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
                     
         gimg = ims[gf][0].data * gscl * scl * rgb_scl[1]  # * 1.5
         if MW_F99 is not None:
-            gmw = 10**(0.4*(MW_F99(np.array([ims[gf][0].header['PHOTPLAM']]))))[0]
-            print('MW_EBV={0:.3f}, {1}: {2:.2f}'.format(mw_ebv, gf, gmw))
+            plam = ims[gf][0].header['PHOTPLAM']
+            gmw = 10**(0.4*(MW_F99(np.array([plam]))))[0]
+            print(f'MW_EBV={mw_ebv:.3f}, {gf}: {gmw:.2f}')
             gimg *= gmw
     
     rmsk = rimg == 0
@@ -5049,16 +5221,18 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
         try:
             _obsm = [utils.get_filter_obsmode(filter=_f) for _f in [rf, gf, bf]]
             _bp = [S.ObsBandpass(_m) for _m in _obsm]
-            _bpf = [ref_spectrum.integrate_filter(_b)/_b.pivot()**2 for _b in _bp]
+            _bpf = [ref_spectrum.integrate_filter(_b)/_b.pivot()**2
+                    for _b in _bp]
             gimg *= _bpf[0]/_bpf[1]
             bimg *= _bpf[0]/_bpf[2]
-            print('ref_spectrum supplied: {0}*{1:.2f} {2}*{3:.2f}'.format(gf, _bpf[0]/_bpf[1], bf, _bpf[0]/_bpf[2]))
+            msg = 'ref_spectrum supplied: {0}*{1:.2f} {2}*{3:.2f}'
+            print(msg.format(gf, _bpf[0]/_bpf[1], bf, _bpf[0]/_bpf[2]))
         except:
             pass
             
     if mask_empty:
         mask = rmsk | gmsk | bmsk
-        print('Mask empty pixels in any channel: {0}'.format(mask.sum()))
+        print(f'Mask empty pixels in any channel: {mask.sum()}')
 
         rimg[mask] = 0
         gimg[mask] = 0
@@ -5085,7 +5259,11 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
 
         ds9.set('rgb channel red')
         ds9.set('rgb lock colorbar')
-
+        
+        gc.collect()
+        for k in ims:
+            ims[k].close()
+            
         return False
 
     xsl = ysl = None
@@ -5120,67 +5298,124 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
                 bmsk = bmsk[ysl, xsl]
     
     if get_images:
-        return (rimg, gimg, bimg), (rf, gf, bf)
-                    
-    image = make_lupton_rgb(rimg, gimg, bimg, stretch=0.1, minimum=rgb_min)
-    if invert:
-        image = 255-image
+        gc.collect()
+        for k in ims:
+            ims[k].close()
         
+        return (rimg, gimg, bimg), (rf, gf, bf)
+    
+    if norm_kwargs is None:
+        image = make_lupton_rgb(rimg, gimg, bimg, stretch=0.1, minimum=rgb_min)
+        
+        if invert:
+            image = 255-image
+        
+    else:
+        msg = f'# field_rgb norm with {norm_kwargs}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+             
+        sh = rimg.shape
+        image = np.zeros((sh[0], sh[1], 3))
+        image[:,:,0] = rimg
+        image[:,:,1] = gimg
+        image[:,:,2] = bimg
+        norm = simple_norm(image, **norm_kwargs)
+        
+        image = norm(image).filled(0)
+        if invert:
+            image = 255 - np.clip(np.cast[int](image*255), 0, 255)
+                    
     if fill_black:
         image[rmsk,0] = 0
         image[gmsk,1] = 0
         image[bmsk,2] = 0
         
     if get_rgb_array:
+        gc.collect()
+        for k in ims:
+            ims[k].close()
+        
         return image
     
     sh = image.shape
     ny, nx, _ = sh
             
     if full_dimensions:
+        # Turn off interactive plotting
+        plt.ioff()
         dpi = int(nx/xsize)
         xsize = nx/dpi
-        #print('xsize: ', xsize, ny, nx, dpi)
-        
+    
     elif (output_dpi is not None):
         xsize = nx/output_dpi
-
-    dim = [xsize, xsize/nx*ny]
-
-    fig, ax = plt.subplots(1,1,figsize=dim)
-
-    ax.imshow(image, origin='lower', extent=(-nx/2, nx/2, -ny/2, ny/2))
-
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-
-    ax.xaxis.set_major_locator(minor)
-    ax.yaxis.set_major_locator(minor)
-
-    #ax.tick_params(axis='x', colors='w', which='both')
-    #ax.tick_params(axis='y', colors='w', which='both')
-    if tickparams:
-        ax.tick_params(**tickparams)
-
-    if add_labels:
-        ax.text(0.03, 0.97, root, bbox=dict(facecolor='w', alpha=0.8), size=10, ha='left', va='top', transform=ax.transAxes)
-
-        ax.text(0.06+0.08*2, 0.02, rf, color='r', bbox=dict(facecolor='w', alpha=1), size=8, ha='center', va='bottom', transform=ax.transAxes)
-        ax.text(0.06+0.08, 0.02, gf, color='g', bbox=dict(facecolor='w', alpha=1), size=8, ha='center', va='bottom', transform=ax.transAxes)
-        ax.text(0.06, 0.02, bf, color='b', bbox=dict(facecolor='w', alpha=1), size=8, ha='center', va='bottom', transform=ax.transAxes)
+        dpi = output_dpi
     
-    if timestamp:
-        fig.text(0.97, 0.03, time.ctime(), ha='right', va='bottom', fontsize=5, transform=fig.transFigure, color='w')
+    dim = [xsize, xsize/nx*ny]
+    
+    if not use_imsave:
+        fig, ax = plt.subplots(1,1,figsize=dim, dpi=dpi)
 
+        ax.imshow(image, origin='lower', extent=(-nx/2, nx/2, -ny/2, ny/2))
+
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+        ax.xaxis.set_major_locator(minor)
+        ax.yaxis.set_major_locator(minor)
+
+        #ax.tick_params(axis='x', colors='w', which='both')
+        #ax.tick_params(axis='y', colors='w', which='both')
+        if tickparams:
+            ax.tick_params(**tickparams)
+
+        if add_labels:
+            ax.text(0.03, 0.97, root,
+                    bbox=dict(facecolor='w', alpha=0.8),
+                    size=10, ha='left', va='top', transform=ax.transAxes)
+
+            ax.text(0.06+0.08*2, 0.02, rf, color='r',
+                    bbox=dict(facecolor='w', alpha=1),
+                    size=8, ha='center', va='bottom',
+                    transform=ax.transAxes)
+                
+            ax.text(0.06+0.08, 0.02, gf, color='g',
+                    bbox=dict(facecolor='w', alpha=1),
+                    size=8, ha='center', va='bottom',
+                    transform=ax.transAxes)
+                
+            ax.text(0.06, 0.02, bf, color='b',
+                    bbox=dict(facecolor='w', alpha=1),
+                    size=8, ha='center', va='bottom',
+                    transform=ax.transAxes)
+    
+        if timestamp:
+            fig.text(0.97, 0.03, time.ctime(),
+                     ha='right', va='bottom', fontsize=5,
+                     transform=fig.transFigure, color='w')
+    else:
+        fig = None
+    
     if full_dimensions:
-        ax.axis('off')
-        fig.tight_layout(pad=0)
-        dpi = int(nx/xsize/full_dimensions)
-        fig.savefig('{0}{1}.{2}'.format(root, suffix, output_format), dpi=dpi)
+        if use_imsave:
+            skimage.io.imsave(f'{root}{suffix}.{output_format}',
+                       image[::-full_dimensions*1,::full_dimensions*1,:],
+                       plugin='pil', quality=95)
+        else:
+            ax.axis('off')
+            fig.tight_layout(pad=0)
+            dpi = int(nx/xsize/full_dimensions)
+        
+            fig.savefig(f'{root}{suffix}.{output_format}', dpi=dpi)
+            plt.close(fig)
+        
     else:
         fig.tight_layout(pad=0.1)
-        fig.savefig('{0}{1}.{2}'.format(root, suffix, output_format))
+        fig.savefig(f'{root}{suffix}.{output_format}')
     
+    gc.collect()
+    for k in ims:
+        ims[k].close()
+
     return xsl, ysl, (rf, gf, bf), fig
 
 #########

@@ -5,6 +5,7 @@ RAW_PATH: null
 PREP_PATH: null
 PERSIST_PATH: null
 EXTRACT_PATH: null
+CRDS_CONTEXT: null
 
 filters: &filters 
     [F410M, F467M, F547M, F550M, F621M, F689M, F763M, F845M, F200LP, F350LP,
@@ -26,7 +27,9 @@ fetch_files_args:
     s3_sync: True
     #filters: *filters
     fetch_flt_calibs: [IDCTAB, PFLTFILE, NPOLFILE]
+    s3path: null
     force_rate: True
+    get_rateints: False
     inst_products: 
         ACS/WFC: [FLC]
         WFC3/IR: [RAW]
@@ -85,6 +88,7 @@ visit_prep_args: &prep_args
     align_assume_close: False
     align_transform: null
     align_ref_border: 100
+    align_guess: null
     max_err_percentile: 99
     align_min_flux_radius: 1.
     catalog_mask_pad: 0.05
@@ -121,11 +125,20 @@ visit_prep_args: &prep_args
         thresholds: [5,4,3]
         dilate_iterations: 3
         deg_pix: 64
+        other_axis: False
     snowball_kwargs:
         snowball_erode: 4
         snowball_dilate: 18
         mask_bit: 1024
         instruments: [NIRCAM, NIRISS]
+        max_fraction: 0.3
+    angle_background_kwargs:
+        threshold: 1.8
+        detection_background: True
+        angles: [30.0, -30.0, 0, 90]
+        suffix: 'angles'
+        niter: 3
+        instruments: []
     miri_skyflat: False
     miri_skyfile: null
     use_skyflats: True

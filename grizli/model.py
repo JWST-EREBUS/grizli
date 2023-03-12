@@ -1976,8 +1976,9 @@ class ImageData(object):
         # Sliced subimage
         slice_wcs = ref_wcs.slice((sly, slx))
         slice_header = hdu.header.copy()
-        hwcs = slice_wcs.to_header(relax=True)
-
+        #hwcs = slice_wcs.to_header(relax=True)
+        hwcs = utils.to_header(slice_wcs, relax=True)
+        
         for k in hwcs.keys():
             if not k.startswith('PC'):
                 slice_header[k] = hwcs[k]
@@ -2244,7 +2245,8 @@ class ImageData(object):
             slice_header['NAXIS2'] = NY
 
             # Sliced WCS keywords
-            hwcs = slice_wcs.to_header(relax=True)
+            hwcs = utils.to_header(slice_wcs, relax=True)
+            
             for k in hwcs:
                 if not k.startswith('PC'):
                     slice_header[k] = hwcs[k]
@@ -3792,7 +3794,7 @@ class GrismFLT(object):
         # crpix_new = np.dot(mat, crpix-center)+center
         
         # Full rotated SIP header
-        orig_header = utils.to_header(self.grism.wcs)
+        orig_header = utils.to_header(self.grism.wcs, relax=True)
         hrot, wrot, desc = utils.sip_rot90(orig_header, rot)
         
         for obj in [self.grism, self.direct]:
@@ -3893,7 +3895,7 @@ class GrismFLT(object):
         """
         Mask edges of exposures that might not have modeled spectra
         """
-        import pyregion
+        from regions import Regions
         import scipy.ndimage as nd
 
         if (self.has_edge_mask) & (force is False):
@@ -3918,9 +3920,9 @@ class GrismFLT(object):
 
         xy_image[:, 0] += xedge
 
-        xy_str = 'image;polygon('+','.join(['{0:.1f}'.format(p) for p in xy_image.flatten()])+')'
-        reg = pyregion.parse(xy_str)
-        mask = reg.get_mask(shape=tuple(self.grism.sh))*1 == 0
+        xy_str = 'image;polygon('+','.join(['{0:.1f}'.format(p + 1) for p in xy_image.flatten()])+')'
+        reg = Regions.parse(xy_str, format='ds9')[0]
+        mask = reg.to_mask().to_image(shape=self.grism.sh).astype(bool)
 
         # Only mask large residuals
         if resid_sn > 0:
@@ -4446,10 +4448,12 @@ class BeamCutout(object):
                 if wcsname == 'BeamLinear2D':
                     break
 
-        h2d = wcs2d.to_header(key=key)
+        # h2d = wcs2d.to_header(key=key)
+        h2d = utils.to_header(wcs2d, key=key)
         for ext in grism_hdu:
             for k in h2d:
-                ext.header[k] = h2d[k], h2d.comments[k]
+                if k not in ext.header:
+                    ext.header[k] = h2d[k], h2d.comments[k]
         ####
 
         hdu.extend(grism_hdu)
@@ -4545,16 +4549,17 @@ class BeamCutout(object):
 
         # Trace properties at desired wavelength
         dx = np.interp(wavelength, self.beam.lam_beam, xarr)
-        dy = np.interp(wavelength, self.beam.lam_beam, self.beam.ytrace_beam)
+        dy = np.interp(wavelength, self.beam.lam_beam, self.beam.ytrace_beam) + 1
 
         dl = np.interp(wavelength, self.beam.lam_beam[1:],
                                    np.diff(self.beam.lam_beam))
 
         ysens = np.interp(wavelength, self.beam.lam_beam,
                           self.beam.sensitivity_beam)
-
+                          
         # Update CRPIX
         dc = 0  # python array center to WCS pixel center
+        # dc = 1.0 # 0.5
 
         for wcs_ext in [wcs.sip, wcs.wcs]:
             if wcs_ext is None:
@@ -4585,7 +4590,7 @@ class BeamCutout(object):
                     wcs_ext.crpix[i] = wcs.wcs.crpix[i]
 
         # WCS header
-        header = wcs.to_header(relax=True)
+        header = utils.to_header(wcs, relax=True)
         for key in header:
             if key.startswith('PC'):
                 header.rename_keyword(key, key.replace('PC', 'CD'))
@@ -4600,6 +4605,7 @@ class BeamCutout(object):
         header['DLDP'] = (dl, 'delta wavelength per pixel')
 
         return header, wcs
+
 
     def get_2d_wcs(self, data=None, key=None):
         """Get simplified WCS of the 2D spectrum
@@ -4756,7 +4762,8 @@ class BeamCutout(object):
         ra, dec = self.direct.wcs.all_pix2world(pix_center, 1)[0]
         return ra, dec
 
-    def get_dispersion_PA(self, decimals=0):
+
+    def get_dispersion_PA(self, decimals=0, local=False):
         """Compute exact PA of the dispersion axis, including tilt of the
         trace and the FLT WCS
 
@@ -4765,11 +4772,14 @@ class BeamCutout(object):
         decimals : int or None
             Number of decimal places to round to, passed to `~numpy.round`.
             If None, then don't round.
-
+        
+        local : bool
+            Compute local PA of a given beam, otherwise use global WCS
+        
         Returns
         -------
         dispersion_PA : float
-            PA (angle East of North) of the dispersion axis.
+            PA (angle East of North) of the increasing-wavelength dispersion axis.
         """
         from astropy.coordinates import Angle
         import astropy.units as u
@@ -4779,26 +4789,39 @@ class BeamCutout(object):
             x0 = self.beam.conf.conf_dict['BEAMA']
         else:
             x0 = np.array([10,30])
+    
+        if local:
+            xp = self.beam.xc - self.beam.pad[1]
+            yp = self.beam.yc - self.beam.pad[0]
+        else:
+            xp = yp = 507 # Dummy, WFC3/IR center
             
-        dy_trace, lam_trace = self.beam.conf.get_beam_trace(x=507, y=507,
-                                                         dx=x0, beam='A')
-
-        extra = np.arctan2(dy_trace[1]-dy_trace[0], x0[1]-x0[0])/np.pi*180
+        x0 = np.mean(x0) + np.array([-10,10])
+    
+        dy_trace, lam_trace = self.beam.conf.get_beam_trace(x=xp, y=yp, dx=x0, beam='A')
 
         # Distorted WCS
         crpix = self.direct.wcs.wcs.crpix
-        xref = [crpix[0], crpix[0]+1]
-        yref = [crpix[1], crpix[1]]
+        
+        if local:
+            xref = -crpix[0] + x0
+            yref = [-crpix[1]+dy_trace[0], -crpix[1]+dy_trace[1]]
+        else:
+            xref = crpix[0] + x0
+            yref = [crpix[1]+dy_trace[0], crpix[1]+dy_trace[1]]
+
         r, d = self.direct.wcs.all_pix2world(xref, yref, 1)
-        pa = Angle((extra +
-                    np.arctan2(np.diff(r)*np.cos(d[0]/180*np.pi),
-                               np.diff(d))[0]/np.pi*180)*u.deg)
+        dra = np.diff(r)*np.cos(d[0]/180*np.pi)
+        dde = np.diff(d)[0]
+
+        pa = Angle((np.arctan2(dra, dde)/np.pi*180)*u.deg)
 
         dispersion_PA = pa.wrap_at(360*u.deg).value
         if decimals is not None:
             dispersion_PA = np.round(dispersion_PA, decimals=decimals)
 
         return float(dispersion_PA)
+
 
     def init_epsf(self, center=None, tol=1.e-3, yoff=0., skip=1., flat_sensitivity=False, psf_params=None, N=4, get_extended=False, only_centering=True):
         """Initialize ePSF fitting for point sources

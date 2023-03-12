@@ -215,6 +215,9 @@ def get_jwst_skyflat(header, verbose=True, valid_flat=(0.7, 1.4)):
     with pyfits.open(skyfile) as _im:
         skyflat = _im[0].data*1
         
+        # flat == 1 are bad
+        skyflat[skyflat == 1] = np.nan
+        
     if 'R_FLAT' in header:
         oflat = os.path.basename(header['R_FLAT'])
         crds_path = os.getenv('CRDS_PATH')
@@ -444,6 +447,11 @@ def img_with_wcs(input, overwrite=True, fit_sip_header=True, skip_completed=True
         if _hdu[0].header['OPUPIL'].startswith('GR'):
             _hdu[0].header['PUPIL'] = 'CLEAR'
             _hdu[0].header['EXP_TYPE'] = 'NRC_IMAGE'
+    elif _hdu[0].header['OINSTRUM'] == 'NIRSPEC':
+        if _hdu[0].header['OGRATING'] not in 'MIRROR':
+            _hdu[0].header['FILTER'] = 'F140X'
+            _hdu[0].header['GRATING'] = 'MIRROR'
+            _hdu[0].header['EXP_TYPE'] = 'NRS_TACONFIRM'
     else:
         # MIRI
         pass
@@ -492,7 +500,7 @@ def img_with_wcs(input, overwrite=True, fit_sip_header=True, skip_completed=True
         # Remove WCS inverse keywords
         for _ext in [0, 'SCI']:
             for k in list(_hdu[_ext].header.keys()):
-                if k[:3] in ['AP_','BP_']:
+                if k[:3] in ['AP_','BP_','PC1','PC2']:
                     _hdu[_ext].header.remove(k)
         
         pscale = utils.get_wcs_pscale(wcs)
@@ -763,7 +771,7 @@ def get_phot_keywords(input, verbose=True):
     return info
 
 
-ORIG_KEYS = ['TELESCOP','INSTRUME','DETECTOR','FILTER','PUPIL','EXP_TYPE']
+ORIG_KEYS = ['TELESCOP','INSTRUME','DETECTOR','FILTER','PUPIL','EXP_TYPE','GRATING']
 
 def copy_jwst_keywords(header, orig_keys=ORIG_KEYS, verbose=True):
     """
@@ -861,7 +869,14 @@ def exposure_oneoverf_correction(file, axis=None, thresholds=[5,4,3], erode_mask
             axis = 0
         else:
             axis = 1
-
+            
+    elif axis < 0:
+        # Opposite axis
+        if im[0].header['INSTRUME'] in ('NIRISS', 'NIRSPEC'):
+            axis = 1
+        else:
+            axis = 0
+        
     msg = f'exposure_oneoverf_correction: {file} axis={axis} deg_pix={deg_pix}'
     utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
     
@@ -994,7 +1009,7 @@ def exposure_oneoverf_correction(file, axis=None, thresholds=[5,4,3], erode_mask
     return fig, model
 
 
-def initialize_jwst_image(filename, verbose=True, max_dq_bit=14, orig_keys=ORIG_KEYS, oneoverf_correction=True, oneoverf_kwargs={'make_plot':False}, use_skyflats=True):
+def initialize_jwst_image(filename, verbose=True, max_dq_bit=14, orig_keys=ORIG_KEYS, oneoverf_correction=True, oneoverf_kwargs={'make_plot':False}, use_skyflats=True, nircam_edge=8):
     """
     Make copies of some header keywords to make the headers look like 
     and HST instrument
@@ -1131,27 +1146,32 @@ def initialize_jwst_image(filename, verbose=True, max_dq_bit=14, orig_keys=ORIG_
         
     elif img[0].header['OINSTRUM'] == 'NIRCAM':
         _det = img[0].header['DETECTOR']
-        bpfile = os.path.join(os.path.dirname(__file__), 
-                   f'data/nrc_lowpix_0916_{_det}.fits.gz')
         
-        if os.path.exists(bpfile) & False:
-            bpdata = pyfits.open(bpfile)[0].data
-            #bpdata = nd.binary_dilation(bpdata > 0, iterations=2)*1024
-            bpdata = nd.binary_dilation(bpdata > 0)*1024
-            if dq.shape == bpdata.shape:
-                dq |= bpdata.astype(dq.dtype)
-            
-                msg = f'initialize_jwst_image: Use extra badpix in {bpfile}'
-                utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+        bpfiles = [os.path.join(os.path.dirname(__file__), 
+                   f'data/nrc_badpix_230120_{_det}.fits.gz')]
+        bpfiles += [os.path.join(os.path.dirname(__file__), 
+                   f'data/nrc_lowpix_0916_{_det}.fits.gz')]
         
-        if _det in ['NRCALONG','NRCBLONG']:
-            msg = 'initialize_jwst_image: Mask outer ring of 6 pixels'
+        for bpfile in bpfiles:
+            if os.path.exists(bpfile) & False:
+                bpdata = pyfits.open(bpfile)[0].data
+                bpdata = nd.binary_dilation(bpdata > 0)*1024
+                if dq.shape == bpdata.shape:
+                    msg = f'initialize_jwst_image: Use extra badpix in {bpfile}'
+                    utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+                    dq |= bpdata.astype(dq.dtype)
+                
+                break
+        
+        #if _det in ['NRCALONG','NRCBLONG']:
+        if True:
+            msg = f'initialize_jwst_image: Mask outer ring of {nircam_edge} pixels'
             msg += f' for {_det}'
             utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
-            dq[:6,:] |= 1024
-            dq[-6:,:] |= 1024
-            dq[:,:6] |= 1024
-            dq[:,-6:] |= 1024
+            dq[:nircam_edge,:] |= 1024
+            dq[-nircam_edge:,:] |= 1024
+            dq[:,:nircam_edge] |= 1024
+            dq[:,-nircam_edge:] |= 1024
              
     img['DQ'].data = dq
     
@@ -1175,8 +1195,20 @@ def initialize_jwst_image(filename, verbose=True, max_dq_bit=14, orig_keys=ORIG_
     
     _nircam_grism = False
     
+    ### Flat-field
+    # Flat-field first?
+    
+    
+    needs_flat = True
+    
     if oneoverf_correction:
-        
+        if 'deg_pix' in oneoverf_kwargs:
+            if oneoverf_kwargs['deg_pix'] == 2048:
+                # Do flat field now for aggressive 1/f correction, since the pixel-level
+                # 1/f correction takes out structure that should be flat-fielded
+                _ = img_with_flat(filename, overwrite=True, use_skyflats=use_skyflats)
+                needs_flat = False
+                
         # NIRCam grism
         if (img[0].header['OINSTRUM'] == 'NIRCAM'):
              if 'GRISM' in img[0].header['OPUPIL']:
@@ -1194,10 +1226,24 @@ def initialize_jwst_image(filename, verbose=True, max_dq_bit=14, orig_keys=ORIG_
                 utils.log_comment(utils.LOGFILE, msg)
             
                 pass
-                                         
-        # axis=None, thresholds=[5,4,3], erode_mask=None, dilate_iterations=3, deg_pix=64, make_plot=True, init_model=0, in_place=False, skip_miri=True, verbose=True
-        
-    _ = img_with_flat(filename, overwrite=True, use_skyflats=use_skyflats)
+            
+            if 'other_axis' in oneoverf_kwargs:
+                if oneoverf_kwargs['other_axis']:
+                    try:
+                        _ = exposure_oneoverf_correction(filename, in_place=True, 
+                                                         axis=-1,
+                                                         **oneoverf_kwargs)
+                    except TypeError:
+                        # Should only fail for test data
+                        utils.log_exception(utils.LOGFILE, traceback)
+                        msg = f'exposure_oneoverf_correction: axis=-1 failed for {filename}'
+                        utils.log_comment(utils.LOGFILE, msg)
+            
+                        pass
+                    
+    ### Flat-field
+    if needs_flat:
+        _ = img_with_flat(filename, overwrite=True, use_skyflats=use_skyflats)
     
     # Now do "1/f" correction to subtract NIRCam grism sky
     if _nircam_grism:
