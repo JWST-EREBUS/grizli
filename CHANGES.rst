@@ -59,3 +59,19 @@ Tagged version
 -----------------
 - Remove writing a few temporary files to /tmp
 - Close out some dangling pyfits.open objects
+
+1.7.1
+-----
+- Modernize setup
+
+1.7.3
+-----
+- Replace `descartes` dependency with updated `sregion`
+
+1.7.4
+-----
+- fix bug in versioning
+
+1.7.6
+-----
+- Updated NIRCam LW bad pixel masks

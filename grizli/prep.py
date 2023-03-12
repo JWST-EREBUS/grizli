@@ -4,11 +4,13 @@ Align direct images & make mosaics
 import os
 import inspect
 import gc
+import warnings
 
 from collections import OrderedDict
 import glob
 import traceback
 
+import yaml
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -99,7 +101,7 @@ def fresh_flt_file(file, preserve_dq=False, path='../RAW/', verbose=True, extra_
         xx nothing now xxx
 
     crclean : bool
-        Run LACosmicx on the exposure
+        Run LACosmicx (astroscrappy) on the exposure
 
     mask_regions : bool
         Apply exposure region mask (like ``_flt.01.mask.reg``) if it exists.
@@ -110,14 +112,11 @@ def fresh_flt_file(file, preserve_dq=False, path='../RAW/', verbose=True, extra_
 
     """
     import shutil
-
     try:
-        import lacosmicx
-        has_lacosmicx = True
-        if crclean:
-            print('Warning (fresh_flt_file): couldn\'t import lacosmicx')
-    except:
-        has_lacosmicx = False
+        from astroscrappy import detect_cosmics
+        has_scrappy = True
+    except ImportError:
+        has_scrappy = False
 
     local_file = os.path.basename(file)
     if preserve_dq:
@@ -281,20 +280,20 @@ def fresh_flt_file(file, preserve_dq=False, path='../RAW/', verbose=True, extra_
     #     extra_msg = ' / flat: {0}'.format(flat_file)
     # 
     #     flat_im = pyfits.open(os.path.join(os.getenv('jref'), flat_file))
-    #     flat = flat_im['SCI'].data #[5:-5, 5:-5]
+    #     flat = flat_im['SCI'].data #[5:-5, 5:-5]:
     #     flat_dq = (flat < 0.2)
     # 
     #     #orig_file['DQ'].data |= 4*flat_dq
     #     orig_file['SCI'].data = np.divide(orig_file['SCI'].data,flat,orig_file['SCI'].data,where=(flat!=0))
     
-    if crclean & has_lacosmicx:
+    if crclean and has_scrappy:
         for ext in [1, 2]:
             print('Clean CRs with LACosmic, extension {0:d}'.format(ext))
 
             sci = orig_file['SCI', ext].data
             dq = orig_file['DQ', ext].data
 
-            crmask, clean = lacosmicx.lacosmicx(sci, inmask=None,
+            crmask, clean = detect_cosmics(sci, inmask=None,
                          sigclip=4.5, sigfrac=0.3, objlim=5.0, gain=1.0,
                          readnoise=6.5, satlevel=65536.0, pssl=0.0, niter=4,
                          sepmed=True, cleantype='meanmask', fsmode='median',
@@ -482,7 +481,7 @@ def apply_region_mask(flt_file, dq_value=1024, verbose=True):
     is found
     
     """
-    import pyregion
+    from regions import Regions
 
     mask_files = glob.glob('_'.join(flt_file.split('_')[:-1]) + '.*.mask.reg')
     if len(mask_files) == 0:
@@ -495,13 +494,17 @@ def apply_region_mask(flt_file, dq_value=1024, verbose=True):
     for mask_file in mask_files:
         ext = int(mask_file.split('.')[-3])
         try:
-            reg = pyregion.open(mask_file).as_imagecoord(flt['SCI', ext].header)
-            mask = reg.get_mask(hdu=flt['SCI', ext])
+            hdu = flt['SCI', ext]
+            reg = Regions.read(mask_file, format='ds9')[0]
+            reg_pix = reg.to_pixel(wcs=pywcs.WCS(hdu.header))
+            shape = hdu.data.shape
+            mask = reg_pix.to_mask().to_image(shape=shape).astype(bool)
         except:
             # Above fails for lookup-table distortion (ACS / UVIS)
             # Here just assume the region file is defined in image coords
-            reg = pyregion.open(mask_file)
-            mask = reg.get_mask(shape=flt['SCI', ext].data.shape)
+            reg = Regions.read(mask_file, format='ds9')[0]
+            shape = flt['SCI', ext].data.shape
+            mask = reg.to_mask().to_image(shape=shape).astype(bool)
 
         flt['DQ', ext].data[mask] |= dq_value
 
@@ -2689,7 +2692,7 @@ def make_drz_catalog(root='', sexpath='sex', threshold=2., get_background=True,
     return cat
 
 
-def make_visit_average_flat(visit, clip_max=0, threshold=5, dilate=3, apply=True, instruments=['MIRI'], verbose=True):
+def make_visit_average_flat(visit, clip_max=0, threshold=5, dilate=3, apply=True, instruments=['MIRI'], verbose=True, bad_bits=(1024+1+2+512), bkg_kwargs={}):
     """
     Make an average "skyflat" for exposures in a visit, e.g., for MIRI
     
@@ -2754,8 +2757,8 @@ def make_visit_average_flat(visit, clip_max=0, threshold=5, dilate=3, apply=True
         for i in tqdm(range(len(visit['files']))):
             _sci = sci[i,:,:]
             _err = err[i,:,:]
-            _mask = dq[i,:,:] > 0
-            _bkg = sep.Background(_sci, mask=_mask)
+            _mask = (dq[i,:,:] & bad_bits) > 0
+            _bkg = sep.Background(_sci, mask=_mask, **bkg_kwargs)
             _cat, _seg = sep.extract(_sci - _bkg.back(), threshold,
                                     err=_err, 
                                     mask=_mask,
@@ -2872,12 +2875,13 @@ def get_nircam_wisp_filename(header):
     if _inst not in ['NIRCAM']:
         msg = f'Instrument {_inst} not supported'
         return None, _filt, _inst, _det, msg
-
-    if _filt not in ['F150W','F200W']:
+        
+    # F150W2 is F160M for now
+    if _filt not in ['F115W','F150W','F200W','F182M','F210M','F140M','F150W2']:
         msg = f'NIRCam filter {_filt} not supported'
         return None, _filt, _inst, _det, msg
 
-    if _det not in ['NRCA3','NRCB3','NRCB4']:
+    if _det not in ['NRCA3','NRCA4','NRCB3','NRCB4']:
         msg = f'NIRCam detector {_det} not supported'
         return None, _filt, _inst, _det, msg
     
@@ -2898,6 +2902,13 @@ def nircam_wisp_correction(calibrated_file, niter=3, update=True, verbose=True, 
     
     Wisp template files at https://stsci.app.box.com/s/1bymvf1lkrqbdn9rnkluzqk30e8o2bne?sortColumn=name&sortDirection=ASC.
     
+    and 
+    
+    https://s3.amazonaws.com/grizli-v2/NircamWisp/index.html
+    
+    The ``wisps_{detector}_{FILTER}.fits`` files should be put in
+    a directory ``$GRIZLI/CONF/NircamWisp``.
+    
     Parameters
     ----------
     calibrated_file : str
@@ -2916,6 +2927,8 @@ def nircam_wisp_correction(calibrated_file, niter=3, update=True, verbose=True, 
         Force wisp fit, even if 'WISPBKG' keyword already found in header
         
     """
+    import scipy.ndimage as nd
+    
     if not os.path.exists(calibrated_file):
         msg = f'nircam_wisp_correction - {calibrated_file} not found'
         utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
@@ -2944,26 +2957,24 @@ def nircam_wisp_correction(calibrated_file, niter=3, update=True, verbose=True, 
         msg += f'{wisp_file} not found'
         utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
         return None
+    
+    wisp_ref_file = os.path.join(os.path.dirname(__file__), 
+                                 'data', 'nircam_wisp.yml')
+                                 
+    with open(wisp_ref_file) as fp:
+        wisp_ref = yaml.load(fp, Loader=yaml.Loader)
+    
+    if _det not in wisp_ref:
+        print(f'{_det} key not found in {wisp_ref_file}')
+        return None
         
     wisp = pyfits.open(wisp_file)
-    
-    yp, xp = np.indices((2048,2048))
-
-    if _det in ['NRCA3']:
-        xc, yc = 623, 1680
-        Rmax = 275
-    elif _det in ['NRCB4']:
-        xc, yc = 1261, 1558
-        Rmax = 480
-    elif _det in ['NRCB3']:
-        xc, yc = 1229, 204
-        Rmax = 470
         
-    wispr = np.sqrt((xp-xc)**2+(yp-yc)**2)
-
-    wisp_msk = np.exp(-(wispr - Rmax)**2/2/80**2)
-    wisp_msk[wispr < Rmax] = 1
-
+    wisp_msk = utils.pixel_polygon_mask(wisp_ref[_det]['polygon'], 
+                                        (2048,2048))
+                                        
+    wisp_msk = nd.gaussian_filter(wisp_msk*1., 50)
+    
     wisp[0].data[~np.isfinite(wisp[0].data)] = 0
     
     sci = im['SCI'].data.flatten()
@@ -2991,7 +3002,8 @@ def nircam_wisp_correction(calibrated_file, niter=3, update=True, verbose=True, 
     # Take background out of model
     _model -= _x[0][0]
     im.close()
-
+    wisp.close()
+    
     if update:
         with pyfits.open(calibrated_file, mode='update') as im:
             im[0].header['WISPBKG'] = _x[0][0], 'Wisp fit, background'
@@ -3104,7 +3116,7 @@ def oneoverf_column_correction(visit, thresholds=[10,1.5], dilate_iter=[10,2], i
             _im.flush()
 
 
-def mask_snowballs(visit, snowball_erode=3, snowball_dilate=18, mask_bit=1024, instruments=['NIRCAM','NIRISS'], unset4=False, **kwargs):
+def mask_snowballs(visit, snowball_erode=3, snowball_dilate=18, mask_bit=1024, instruments=['NIRCAM','NIRISS'], max_fraction=0.3, unset4=False, **kwargs):
     """
     Mask JWST IR snowballs
     
@@ -3124,6 +3136,10 @@ def mask_snowballs(visit, snowball_erode=3, snowball_dilate=18, mask_bit=1024, i
     
     instruments : list
         Instruments where mask is calculated
+    
+    max_fraction : float
+        Maximum allowed fraction of pixels in identified snowballs.  If
+        exceeded, then turn off the mask.
     
     unset4 : bool
         Unset DQ=4 bit for flagged CRs
@@ -3157,7 +3173,18 @@ def mask_snowballs(visit, snowball_erode=3, snowball_dilate=18, mask_bit=1024, i
                                                iterations=snowball_dilate)
             
             label, num_labels = nd.label(snowball_mask)
+
+            _maskfrac = snowball_mask.sum() / snowball_mask.size
             
+            if _maskfrac > max_fraction:
+                msg = f"Snowball mask: {_file} problem "
+                msg += f" fraction {_maskfrac:.2f} > {max_fraction:.2f}"
+                msg += "turning off..."
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                snowball_mask &= False
+                
+                unset4 = True
+                
             _im['DQ'].data |= (snowball_mask*mask_bit).astype(_im['DQ'].data.dtype)
             
             if unset4:
@@ -3172,7 +3199,6 @@ def mask_snowballs(visit, snowball_erode=3, snowball_dilate=18, mask_bit=1024, i
             _im['SCI'].header['SNOWBALN'] = (num_labels,
                                 'Number of labeled features in snowball mask')
             
-            _maskfrac = snowball_mask.sum() / snowball_mask.size
             _im['SCI'].header['SNOWBALF'] = (_maskfrac,
                                  'Fraction of masked pixels in snowball mask')
             
@@ -3295,26 +3321,319 @@ def blot_background(visit={'product': '', 'files': None},
                 tscale = 1./flt[0].header['EXPTIME']
             else:
                 tscale = 1.
-
-            flt['SCI', ext].data -= blotted*tscale
-            flt['SCI', ext].header['BLOTSKY'] = (True,
-                                                 'Sky blotted from SKYIMAGE')
-            flt['SCI', ext].header['SKYIMAGE'] = (drz_file,
-                                                  'Source image for sky')
-            flt['SCI', ext].header['SKYBW'] = (bkg_params['bw'], 
-                                               'Sky bkg_params')
-            flt['SCI', ext].header['SKYBH'] = (bkg_params['bh'],
-                                               'Sky bkg_params')
-            flt['SCI', ext].header['SKYFW'] = (bkg_params['fw'],
-                                               'Sky bkg_params')
-            flt['SCI', ext].header['SKYFH'] = (bkg_params['fh'],
-                                               'Sky bkg_params')
-            flt['SCI', ext].header['SKYPIX'] = (bkg_params['pixel_scale'], 
-                                                'Sky bkg_params, pixel_scale')
+            
+            ## Put result in "BKG" extension(s)
+            if ('BKG',ext) not in flt:
+                bhdu = pyfits.ImageHDU(data=blotted*tscale, name='BKG',
+                                       ver=ext,
+                                       header=flt['SCI',ext].header)
+                flt.append(bhdu)
+            else:
+                bhdu = flt['BKG',ext]
+                bhdu.data += blotted*tscale
+            
+            bhdu = flt['BKG',ext]
+            bhdu.header['BLOTSKY'] = (True, 'Sky blotted from SKYIMAGE')
+            bhdu.header['SKYIMAGE'] = (drz_file, 'Source image for sky')
+            bhdu.header['SKYBW'] = (bkg_params['bw'], 'Sky bkg_params')
+            bhdu.header['SKYBH'] = (bkg_params['bh'], 'Sky bkg_params')
+            bhdu.header['SKYFW'] = (bkg_params['fw'], 'Sky bkg_params')
+            bhdu.header['SKYFH'] = (bkg_params['fh'], 'Sky bkg_params')
+            bhdu.header['SKYPIX'] = (bkg_params['pixel_scale'],
+                                     'Sky bkg_params, pixel_scale')
 
         flt.flush()
 
     return True
+
+
+def get_rotated_column_average(data, mask, theta, axis=1, statfunc=np.nanmedian, order=0):
+    """
+    Get median along an image axis after rotating by and angle `theta`, e.g., for
+    long NIRcam diffraction spikes
+    
+    Parameters
+    ----------
+    data : array-like
+        Science data
+    
+    mask : array-like
+        Mask for valid data
+    
+    theta : float
+        Rotation angle passed to `scipy.ndimage.rotate` (degrees)
+    
+    axis : int
+        Image axis along which to compute `statfunc`
+    
+    statfunc : function
+        Statistic to calculate.  Should be `nan`-safe as masked pixels are filled with `~numpy.nan`
+    
+    order : int
+        Interpolation order for `scipy.ndimage.rotate`.  Default `order=0` is nearest-neighbor interpolation and fastest
+        
+    Returns
+    -------
+    back : array-like
+        Filled array of `statfunc` rotated back to the original frame
+        
+    """
+    import scipy.ndimage as nd
+    
+    # Rotate the data and mask
+    rot = nd.rotate(data, theta, order=order,
+                    reshape=True,
+                    mode='constant')
+    
+    srot = nd.rotate(mask, theta, order=order,
+                     reshape=True,
+                     mode='constant')
+    
+    msk = (srot == 1) & (rot != 0)
+    rows = rot*1.
+    rows[~msk] = np.nan
+    
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        med = statfunc(rows, axis=axis)
+
+    if axis == 1:
+        row_model = np.zeros_like(rows) + med[:,None]
+    else:
+        row_model = np.zeros_like(rows) + med
+
+    row_model[~np.isfinite(row_model)] = 0
+    
+    # Rotate back
+    back = nd.rotate(row_model, -theta, order=order,
+                               reshape=True,
+                               mode='constant')
+    
+    # Slices if the rotated images were resized,
+    # assuming that the original image is centered in the output
+    
+    shn = back.shape
+    sho = data.shape
+    nx = shn[1]-sho[1]
+    ny = shn[0] - sho[0]
+    
+    if nx > 0:
+        slx = slice(nx//2,-nx//2)
+    else:
+        slx = slice(0,sho[1])
+        
+    if ny > 0:
+        sly = slice(ny//2,-ny//2)
+    else:
+        sly = slice(0, sho[0])
+
+    back_sl = back[sly, slx]
+    back_sl[~np.isfinite(back_sl)] = 0.
+    
+    return back_sl
+
+
+def subtract_visit_angle_averages(visit, threshold=1.8, detection_background=True, angles=[30.0, -30.0, 0, 90], suffix='angles', niter=3, instruments=['NIRCAM'], stepsize=10, verbose=True):
+    """
+    Subtract angle averages from exposures in a `visit` group
+    
+    Parameters
+    ----------
+    visit : dict
+        Visit association dictionary
+    
+    threshold : float
+        Detection threshold for source masking
+    
+    detection_background : bool
+        Run source mask detection with background estimation
+    
+    angles : list
+        List of angles relative to `PA_APER` to compute.  For JWST/NIRCam, the 
+        diffraction spikes are at approximately +/- 30 deg.
+    
+    suffix : str
+        If provided, write an output file of the drizzle-combined angle 
+        background image
+    
+    niter : int
+        Number of iterations.  A few iterations seems to help, perhaps because 
+        of imperfect mapping between the exposure frame and the drizzled frame 
+        where the correction is derived
+    
+    instruments : list
+        Only perform if exposure instrument is in this list
+    
+    stepsize : int
+        Parameter for blot
+    
+    Returns
+    -------
+    hdu : `~astropy.io.fits.HDUList`
+        FITS data with the drizzled data and angle averages
+        
+    """
+    if instruments is None:
+        return None
+    
+    if len(instruments) == 0:
+        return None
+        
+    frame = inspect.currentframe()
+    utils.log_function_arguments(utils.LOGFILE, frame,
+                                 'prep.subtract_visit_angle_averages')
+     
+    with pyfits.open(visit['files'][0]) as im:
+        
+        if 'OINSTRUM' in im[0].header:
+            _instrume = im[0].header['OINSTRUM']
+        else:
+            _instrume = im[0].header['INSTRUME']
+        
+        if _instrume not in instruments:
+            msg = f"subtract_visit_angle_averages: "
+            msg += f"{_instrume} not in {instruments}"
+            utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+            return None
+
+        pa_aper = im['SCI'].header['PA_APER']
+        wcs_i = pywcs.WCS(im['SCI'].header, relax=True, fobj=im)
+        pixel_scale = utils.get_wcs_pscale(wcs_i)*0.8
+        
+    if 'footprints' not in visit:
+        visit['footprints'] = []
+        for f in visit['files']:
+            with pyfits.open(f) as im:
+                wcs_i = pywcs.WCS(im['SCI'].header, relax=True)
+            
+            sr = utils.SRegion(wcs_i.calc_footprint())
+            visit['footprints'].append(sr.shapely[0])
+    
+    for _iter in range(niter):
+        
+        ##################
+        ### Visit-level mosaic
+
+        drz_h0, drz_wcs = utils.make_maximal_wcs(visit['files'],
+                                                 pixel_scale=pixel_scale,
+                                                 pad=4,
+                                                 theta=0,
+                                                 get_hdu=False,
+                                                 verbose=False,
+                                                )
+
+        msg = f"subtract_visit_angle_averages: {visit['product']}"
+        msg += f" threshold: {threshold} angles: {angles} "
+        msg += f"pa_aper: {pa_aper:.2f}  iter: {_iter}"
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+
+        drz = utils.drizzle_from_visit(visit, drz_wcs,
+                                       kernel='square',
+                                       pixfrac=1.0,
+                                       clean=False,
+                                       verbose=False,
+                                       scale_photom=False,
+                                      )
+        drz_h = drz[2]
+
+        drz_h['PA_APER'] = pa_aper, 'PA_APER used for reference'
+        drz_h['BKGANGLE'] = (','.join([f'{a:.1f}' for a in angles]), 
+                             'Background angles')
+        drz_h['NITANGLE'] = niter, 'Number of iterations for angle subtraction'
+        
+        data, wht = drz[0], drz[1]
+        err = 1/np.sqrt(wht)
+        mask = (wht > 0)
+
+        ##################
+        ### Source detection for mask
+
+        cat, seg = make_SEP_catalog_from_arrays(data, err, (~mask),
+                                                wcs=drz_wcs,
+                                                threshold=threshold,
+                                            get_background=detection_background,
+                                                segmentation_map=True,
+                                                verbose=False,
+                                                )
+
+        smask = (seg == 0) & mask
+
+        ##################
+        ### Do the angle subtraction
+
+        med_model = data*0.
+        for i, off in enumerate(angles):
+            med_model += get_rotated_column_average(data - med_model,
+                                                    smask,
+                                                    pa_aper+off)
+
+        ##################
+        ### Apply to exposure files
+
+        for i, file in enumerate(visit['files'][:]):
+            with pyfits.open(file, mode='update') as flt:
+                msg = f"subtract_visit_angle_averages: remove from {file}"
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+
+                for ext in range(1, 5):
+                    if ('SCI', ext) not in flt:
+                        continue
+
+                    flt_wcs = pywcs.WCS(flt['SCI', ext].header,
+                                        fobj=flt,
+                                        relax=True)
+                    
+                    flt_wcs.pscale = utils.get_wcs_pscale(flt_wcs)
+
+                    blt = utils.blot_nearest_exact(med_model.astype(np.float32),
+                                                       drz_wcs, flt_wcs,
+                                                       stepsize=stepsize,
+                                                       scale_by_pixel_area=True)
+                    
+                    # TBD
+                    tscale = 1.
+                    if ('BKG',ext) not in flt:
+                        hdu = pyfits.ImageHDU(data=blt,
+                                              name='BKG', ver=ext, 
+                                              header=flt['SCI',ext].header)
+
+                        flt.append(hdu)
+                    else:
+                        flt['BKG',ext].data += blt
+                    
+                    for k in ['PA_APER','BKGANGLE','NITANGLE','GRIZLIV']:
+                        flt['BKG',ext].header[k] = drz_h[k], drz_h.comments[k]
+
+                flt.flush()
+        
+        _cleaned = data - med_model
+        
+        if _iter == 0:
+            drz_hdu = pyfits.HDUList([])
+            
+            drz_hdu.append(pyfits.PrimaryHDU(
+                                             data=med_model.astype(np.float32), 
+                                             header=drz_h,
+                                             )
+                           )
+            drz_hdu.append(pyfits.ImageHDU(data=_cleaned.astype(np.float32), 
+                                           header=drz_h,
+                                          )
+                           )
+            drz_hdu.append(pyfits.ImageHDU(data=smask*1, 
+                                           header=drz_h,
+                                          )
+                           )            
+        else:
+            drz_hdu[0].data += med_model.astype(np.float32)
+            drz_hdu[1].data = _cleaned.astype(np.float32)
+            drz_hdu[2].data = smask*1
+
+    if suffix is not None:
+        out = f"{visit['product']}_{suffix}.fits"
+        drz_hdu.writeto(out, overwrite=True, output_verify='Fix')
+        
+    return drz_hdu
 
 
 def separate_chip_sky(visit, filters=['F200LP','F350LP','F600LP','F390W'], stepsize=10, statistic=np.nanmedian, by_amp=True, only_flc=True, row_average=True, average_order=11, seg_dilate=16, **kwargs):
@@ -3434,7 +3753,7 @@ def separate_chip_sky(visit, filters=['F200LP','F350LP','F600LP','F390W'], steps
                     if os.path.exists('/tmp'):
                         fig.savefig('/tmp/rows.png')
                     
-                    fig.close()
+                    plt.close()
                 
             ###############
             
@@ -3658,6 +3977,7 @@ def process_direct_grism_visit(direct={},
                                align_min_flux_radius=1., 
                                align_assume_close=False,
                                align_transform=None,
+                               align_guess=None,
                                max_err_percentile=99,
                                catalog_mask_pad=0.05,
                                match_catalog_density=None,
@@ -3676,6 +3996,7 @@ def process_direct_grism_visit(direct={},
                                skymethod='localmin',
                                drizzle_params={},
                                iter_atol=1.e-4,
+                               static_mask=False,
                                imaging_bkg_params=None,
                                run_separate_chip_sky=True,
                                separate_chip_kwargs={},
@@ -3685,6 +4006,7 @@ def process_direct_grism_visit(direct={},
                                nircam_wisp_kwargs={},
                                oneoverf_kwargs={},
                                snowball_kwargs={},
+                               angle_background_kwargs={},
                                miri_skyflat=True,
                                miri_skyfile=None,
                                use_skyflats=True):
@@ -3942,6 +4264,7 @@ def process_direct_grism_visit(direct={},
                          resetbits=4096,
                          final_wht_type='IVM',
                          gain=_gain,
+                         static=static_mask,
                          rdnoise=_rdnoise, **drizzle_params)
         else:
             AstroDrizzle(direct['files'], output=direct['product'],
@@ -3952,6 +4275,7 @@ def process_direct_grism_visit(direct={},
                          driz_cr_corr=False, driz_combine=True,
                          build=False, final_wht_type='IVM',
                          gain=_gain,
+                         static=False,
                          rdnoise=_rdnoise,
                          **drizzle_params)
 
@@ -3972,6 +4296,7 @@ def process_direct_grism_visit(direct={},
                              final_bits=bits, coeffs=True, build=False,
                              final_wht_type='IVM',
                              gain=_gain,
+                             static=static_mask,
                              rdnoise=_rdnoise,
                              resetbits=0)
         
@@ -4001,7 +4326,9 @@ def process_direct_grism_visit(direct={},
             os.remove(logfile)
 
         guess_file = '{0}.align_guess'.format(direct['product'])
-        if os.path.exists(guess_file):
+        if align_guess != None:
+            guess = align_guess
+        elif os.path.exists(guess_file):
             guess = np.loadtxt(guess_file)
         else:
             guess = [0., 0., 0., 1]
@@ -4092,6 +4419,7 @@ def process_direct_grism_visit(direct={},
                          driz_cr=False, driz_cr_corr=False,
                          build=False, final_wht_type='IVM',
                          gain=_gain, rdnoise=_rdnoise,
+                         static=False,
                          **drizzle_params)
         else:
             if 'par' in direct['product']:
@@ -4108,6 +4436,7 @@ def process_direct_grism_visit(direct={},
                          driz_cr_scale=driz_cr_scale, build=False,
                          final_wht_type='IVM',
                          gain=_gain, rdnoise=_rdnoise,
+                         static=static_mask,
                          **drizzle_params)
                          
         # Flag areas of ACS images covered by a single image, where
@@ -4150,6 +4479,7 @@ def process_direct_grism_visit(direct={},
                          driz_cr=False, driz_cr_corr=False,
                          build=False, final_wht_type='IVM',
                          gain=_gain, rdnoise=_rdnoise,
+                         static=static_mask,
                          **drizzle_params)
              
             clean_drizzle(direct['product'])
@@ -4173,16 +4503,45 @@ def process_direct_grism_visit(direct={},
         
         if run_separate_chip_sky & isACS:
             separate_chip_sky(direct, **separate_chip_kwargs)
-            
-        # Chip-level background for some UVIS filters
-        #  uvis_chip_background(visit=direct)
+        
+        # Reset JWST headers
+        if isJWST:
+            for file in direct['files']:
+                _ = jwst_utils.set_jwst_to_hst_keywords(file, reset=True)
+        
+        if angle_background_kwargs:
+            subtract_visit_angle_averages(direct, **angle_background_kwargs)
+        
+        # Remake final mosaic
+        _ = utils.drizzle_from_visit(direct,
+                                     output=None,
+                                     pixfrac=1.,
+                                     kernel='point',
+                                     clean=False,
+                                     include_saturated=True, 
+                                     keep_bits=None,
+                                     dryrun=False,
+                                     skip=None,
+                                     extra_wfc3ir_badpix=True,
+                                     verbose=False,
+                                     scale_photom=False,
+                                     calc_wcsmap=False)
+                       
+        _sci, _wht, _hdr, _files, _info = _
+        _drcfile = glob.glob(f"{direct['product']}_dr*sci.fits")[0]
+        _whtfile = _drcfile.replace('_sci.fits','_wht.fits')
+        pyfits.PrimaryHDU(data=_sci, header=_hdr).writeto(_drcfile,
+                                                          overwrite=True)
+        pyfits.PrimaryHDU(data=_wht, header=_hdr).writeto(_whtfile,
+                                                          overwrite=True)
         
         # Remake catalog
         #cat = make_drz_catalog(root=direct['product'], threshold=thresh)
         cat = make_SEP_catalog(root=direct['product'], threshold=thresh)
 
         # 140 brightest or mag range
-        clip = (cat['MAG_AUTO'] > align_mag_limits[0]) & (cat['MAG_AUTO'] < align_mag_limits[1])
+        clip = (cat['MAG_AUTO'] > align_mag_limits[0])
+        clip &= (cat['MAG_AUTO'] < align_mag_limits[1])
         if len(align_mag_limits) > 2:
             clip &= cat['MAGERR_AUTO'] < align_mag_limits[2]
         else:
@@ -4198,21 +4557,14 @@ def process_direct_grism_visit(direct={},
         if clip.sum() > NMAX:
             so = so[:NMAX]
 
-        table_to_regions(cat[clip][so], 
-                         '{0}.cat.reg'.format(direct['product']))
+        table_to_regions(cat[clip][so], f"{direct['product']}.cat.reg")
 
         if not ((isACS | isWFPC2) & is_single):
-            table_to_radec(cat[clip][so], 
-                           '{0}.cat.radec'.format(direct['product']))
+            table_to_radec(cat[clip][so], f"{direct['product']}.cat.radec")
 
         if (fix_stars) & (not isACS) & (not isWFPC2) & (not isJWST):
             fix_star_centers(root=direct['product'], drizzle=False, 
                              mag_lim=19.5)
-        
-        # Reset JWST headers
-        if isJWST:
-            for file in direct['files']:
-                _ = jwst_utils.set_jwst_to_hst_keywords(file, reset=True)
         
     #################
     # Grism image processing
@@ -4250,8 +4602,12 @@ def process_direct_grism_visit(direct={},
                  driz_cr_corr=False,
                  driz_cr_snr=driz_cr_snr, driz_cr_scale=driz_cr_scale,
                  driz_combine=True, final_bits=bits, coeffs=True,
-                 resetbits=4096, build=False, final_wht_type='IVM',
-                 gain=_gain, rdnoise=_rdnoise)
+                 resetbits=4096,
+                 build=False,
+                 final_wht_type='IVM',
+                 gain=_gain,
+                 rdnoise=_rdnoise,
+                 static=static_mask)
     
     if isJWST:
         # Set keywords back
@@ -4309,7 +4665,9 @@ def process_direct_grism_visit(direct={},
                  driz_combine=True, driz_sep_bits=bits, final_bits=bits,
                  coeffs=True, resetbits=4096, final_pixfrac=pixfrac,
                  build=False,
-                 gain=_gain, rdnoise=_rdnoise,
+                 gain=_gain,
+                 rdnoise=_rdnoise,
+                 static=static_mask,
                  final_wht_type='IVM')
     
     if os.path.exists(skyfile):
@@ -4468,7 +4826,8 @@ def tweak_align(direct_group={}, grism_group={}, max_dist=1., n_min=10, key=' ',
                  resetbits=4096, final_bits=bits, driz_sep_bits=bits,
                  preserve=False, driz_cr_snr=driz_cr_snr,
                  driz_cr_scale=driz_cr_scale, build=False,
-                 final_wht_type='IVM')
+                 final_wht_type='IVM',
+                 static=False)
 
     clean_drizzle(direct_group['product'])
     #cat = make_drz_catalog(root=direct_group['product'], threshold=1.6)
@@ -4489,7 +4848,8 @@ def tweak_align(direct_group={}, grism_group={}, max_dist=1., n_min=10, key=' ',
                  median=True, blot=True, driz_cr=True, driz_cr_corr=True,
                  driz_combine=True, driz_sep_bits=bits, final_bits=bits,
                  coeffs=True, resetbits=4096, final_pixfrac=pixfrac,
-                 build=False, final_wht_type='IVM')
+                 build=False, final_wht_type='IVM',
+                 static=False)
     
     if os.path.exists(skyfile):
         os.remove(skyfile)
@@ -5339,6 +5699,12 @@ def visit_grism_sky(grism={}, apply=True, column_average=True, verbose=True, ext
     isJWST = False
     isACS = False
     
+    # Skip NIRCam grism
+    if 'GRISM' in grism_element:
+        logstr = f'# visit_grism_sky: skip for {grism_element}'
+        utils.log_comment(utils.LOGFILE, logstr, verbose=verbose)
+        return False
+        
     flat = 1.
     if grism_element == 'G141':
         bg_fixed = ['zodi_G141_clean.fits']
@@ -5953,16 +6319,7 @@ def find_single_image_CRs(visit, simple_mask=False, with_ctx_mask=True,
     Requires context (CTX) image `visit['product']+'_drc_ctx.fits`.
     """
     from drizzlepac import astrodrizzle
-    try:
-        import lacosmicx
-        has_lacosmicx = True
-    except:
-        if run_lacosmic:
-            print('Warning (find_single_image_CRs): couldn\'t import lacosmicx')
-
-        utils.log_exception(utils.LOGFILE, traceback)
-        utils.log_comment(utils.LOGFILE, "# ! LACosmicx requested but not found")
-        has_lacosmicx = False
+    from astroscrappy import detect_cosmics
 
     # try:
     #     import reproject
@@ -5978,7 +6335,7 @@ def find_single_image_CRs(visit, simple_mask=False, with_ctx_mask=True,
         bits = np.log2(ctx[0].data)
         mask = ctx[0].data == 0
         #single_image = np.cast[np.float32]((np.cast[int](bits) == bits) & (~mask))
-        single_image = np.cast[np.float]((np.cast[int](bits) == bits) & (~mask))
+        single_image = np.cast[float]((np.cast[int](bits) == bits) & (~mask))
         ctx_wcs = pywcs.WCS(ctx[0].header)
         ctx_wcs.pscale = utils.get_wcs_pscale(ctx_wcs)
         ctx.close()
@@ -6027,8 +6384,8 @@ def find_single_image_CRs(visit, simple_mask=False, with_ctx_mask=True,
                 else:
                     inmask = dq > 0
 
-                if run_lacosmic & has_lacosmicx:
-                    crmask, clean = lacosmicx.lacosmicx(sci, inmask=inmask,
+                if run_lacosmic:
+                    crmask, clean = detect_cosmics(sci, inmask=inmask,
                              sigclip=4.5, sigfrac=0.3, objlim=5.0, gain=1.0,
                              readnoise=6.5, satlevel=65536.0, pssl=0.0,
                              niter=4, sepmed=True, cleantype='meanmask',

@@ -2,7 +2,6 @@
 Utilities for fitting stacked (drizzled) spectra
 """
 from collections import OrderedDict
-from imp import reload
 
 import astropy.io.fits as pyfits
 import astropy.units as u
@@ -523,7 +522,7 @@ class StackFitter(GroupFitter):
             scale_fit = scipy.optimize.minimize(self.objective_scale, init, args=(Ax, dataf*sivarf, self.wavef, fit_mask, sivarf, Nphot, self.N, 0), method=method, jac=None, hess=None, hessp=None, bounds=(), constraints=(), tol=tol, callback=None, options=None)
 
             if order == 0:
-                scale_fit.x = np.array([np.float(scale_fit.x)])
+                scale_fit.x = np.array([float(scale_fit.x)])
 
         coeffs, full, resid, chi2, AxT = self.objective_scale(scale_fit.x, Ax, dataf*sivarf, self.wavef, fit_mask, sivarf, Nphot, self.N, True)
 

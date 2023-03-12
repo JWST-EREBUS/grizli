@@ -31,12 +31,12 @@ class aXeConf():
 
             # Global XOFF/YOFF offsets
             if 'XOFF' in self.conf.keys():
-                self.xoff = np.float(self.conf['XOFF'])
+                self.xoff = float(self.conf['XOFF'])
             else:
                 self.xoff = 0.
 
             if 'YOFF' in self.conf.keys():
-                self.yoff = np.float(self.conf['YOFF'])
+                self.yoff = float(self.conf['YOFF'])
             else:
                 self.yoff = 0.
 
@@ -462,7 +462,38 @@ class aXeConf():
         #plt.savefig('{0}.pdf'.format(self.conf_file))
         
         return fig
-        
+
+
+def coeffs_from_astropy_polynomial(p):
+    """
+    Get field-dependent coefficients in aXe format from an 
+    `astropy.modeling.polynomial.Polynomial2D` model
+    
+    Parameters
+    ----------
+    p : `astropy.modeling.polynomial.Polynomial2D`
+        Polynomial model
+    
+    Returns
+    -------
+    coeffs : array-like
+        Reordered array of coefficients
+    
+    """
+    coeffs = []
+    for _p in range(p.degree+1):
+        for _py in range(_p+1):
+            # print 'x**%d y**%d' %(_p-_py, _py)
+            _px = _p - _py
+            pname = f'c{_px}_{_py}'
+            if pname in p.param_names:
+                pix = p.param_names.index(pname)
+                coeffs.append(p.parameters[pix])
+            else:
+                coeffs.append(0.0)
+    
+    return np.array(coeffs)
+
 
 def get_config_filename(instrume='WFC3', filter='F140W',
                         grism='G141', module=None, chip=1):
@@ -535,6 +566,8 @@ def get_config_filename(instrume='WFC3', filter='F140W',
         
         conf_files = []
         conf_files.append(os.path.join(GRIZLI_PATH,
+                            'CONF/{0}.{1}.221215.conf'.format(grism, filter)))
+        conf_files.append(os.path.join(GRIZLI_PATH,
                             'CONF/{0}.{1}.220725.conf'.format(grism, filter)))
         conf_files.append(os.path.join(GRIZLI_PATH,
                             'CONF/{0}.{1}.conf'.format(grism, filter)))
@@ -545,6 +578,9 @@ def get_config_filename(instrume='WFC3', filter='F140W',
             if os.path.exists(conf_file):
                 #print(f'NIRISS: {conf_file}')
                 break
+            else:
+                #print(f'skip NIRISS: {conf_file}')
+                pass
                 
         # if not os.path.exists(conf_file):
         #     print('CONF/{0}.{1}.conf'.format(grism, filter))
@@ -868,6 +904,8 @@ class TransformGrismconf(object):
             Effective wavelength along the trace evaluated at `dx`.
 
         """
+        from astropy.modeling.models import Polynomial2D
+        
         x0 = np.squeeze(self.transform.reverse(x, y))
         
         if self.transform.trace_axis == '+x':
@@ -899,7 +937,39 @@ class TransformGrismconf(object):
         #trace_dy = y - rev[1,:]
         
         # Trace offsets for NIRCam
-        if os.path.basename(self.conf_file) == 'NIRCAM_F444W_modA_R.conf':
+        if 'V4/NIRCAM_F444W_modB_R.conf' in self.conf_file:
+            trace_dy += -0.5
+            
+            # Shifts derived from FRESCO
+            coeffs = {'c0_0': 0.3723992993620532,
+                      'c1_0': -0.00011461411413576305,
+                      'c2_0': -8.575199405062535e-08,
+                      'c0_1': -0.0011862122093603026,
+                      'c0_2': 4.1403439215806165e-07,
+                      'c1_1': 1.6558275336712723e-07
+                     }
+            
+            poly = Polynomial2D(degree=2, **coeffs)
+            trace_dy += poly(x, y)
+            #print(f'polynomial offset: {poly(x,y):.3f}')
+            
+        elif 'V4/NIRCAM_F444W_modA_R.conf' in self.conf_file:
+            trace_dy += -2.5
+            
+            # Shifts derived from FRESCO
+            coeffs = {'c0_0': 0.34191256988768415,
+                      'c1_0': -0.0003378232293429956,
+                      'c2_0': -9.238111910134196e-09,
+                      'c0_1': -7.063720696711682e-05,
+                      'c0_2': 2.5217177632321527e-08,
+                      'c1_1': -1.4345820074275903e-07
+                      }
+
+            poly = Polynomial2D(degree=2, **coeffs)
+            trace_dy += poly(x, y)
+            #print(f'polynomial offset: {poly(x,y):.3f}')
+            
+        elif os.path.basename(self.conf_file) == 'NIRCAM_F444W_modA_R.conf':
             trace_dy += -2.5
         elif os.path.basename(self.conf_file) == 'NIRCAM_F444W_modA_C.conf':
             trace_dy += -0.1
@@ -952,7 +1022,7 @@ class TransformGrismconf(object):
             #self.beams.append(beam)
             self.dxlam[beam] = np.arange(xarr[0], xarr[-1], dtype=int)
             self.nx[beam] = xarr[-1] - xarr[0]+1
-
+                        
             sens = Table()
             sens['WAVELENGTH'] = lam.astype(np.double)
             sens['SENSITIVITY'] = self.conf.SENS[order](lam).astype(np.double)
@@ -963,6 +1033,19 @@ class TransformGrismconf(object):
             
             self.conf_dict[f'BEAM{beam}'] = np.array([xarr[0], xarr[-1]])
             self.conf_dict[f'MMAG_EXTRACT_{beam}'] = 29
+        
+        # Read updated sensitivity files
+        if 'V4/NIRCAM_F444W' in self.conf_file:
+            sens_file = self.conf_file.replace('.conf', '_ext_sensitivity.fits')
+            if os.path.exists(sens_file):
+                # print(f'Replace sensitivity: {sens_file}')
+                new = utils.read_catalog(sens_file)
+                _tab = utils.GTable()
+                _tab['WAVELENGTH'] = new['WAVELENGTH'].astype(float)
+                _tab['SENSITIVITY'] = new['SENSITIVITY'].astype(float)
+                _tab['ERROR'] = new['ERROR'].astype(float)
+                
+                self.sens['A'] = _tab
 
 
 def load_grism_config(conf_file, warnings=True):
@@ -1015,7 +1098,7 @@ def load_grism_config(conf_file, warnings=True):
             if 'ERROR' in conf.sens[b].colnames:
                 conf.sens[b]['ERROR'] *= hack_niriss
         
-        if 'F115W' in conf_file:
+        if ('F115W' in conf_file) | ('.2212' in conf_file):
             pass
             # msg = f""" !! Shift F115W along dispersion"""
             # utils.log_comment(utils.LOGFILE, msg, verbose=warnings)
@@ -1044,9 +1127,9 @@ def load_grism_config(conf_file, warnings=True):
         
         if ('F150W' in conf_file) & (hack_niriss > 1.01):
             conf.sens['A']['SENSITIVITY'] *= 1.08
-            
-        # Scale 0th orders in F150W,F200W
-        if ('F150W' in conf_file) | ('F200W' in conf_file):
+             
+        # Scale 0th orders in F150W
+        if ('F150W' in conf_file): # | ('F200W' in conf_file):
             msg = f""" ! Scale 0th order (B) by an additional x 1.5"""
             utils.log_comment(utils.LOGFILE, msg, verbose=warnings)
             conf.sens['B']['SENSITIVITY'] *= 1.5

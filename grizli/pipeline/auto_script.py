@@ -7,6 +7,7 @@ import traceback
 import glob
 import time
 import warnings
+import gc
 
 import yaml
 
@@ -251,6 +252,7 @@ def create_path_dict(root='j142724+334246', home='$PWD', raw=None, prep=None, ex
 def go(root='j010311+131615', 
        HOME_PATH='$PWD',
        RAW_PATH=None, PREP_PATH=None, PERSIST_PATH=None, EXTRACT_PATH=None,
+       CRDS_CONTEXT=None,
        filters=args['filters'],
        fetch_files_args=args['fetch_files_args'],
        inspect_ramps=False,
@@ -375,7 +377,14 @@ def go(root='j010311+131615',
     utils.LOGFILE = os.path.join(PATHS['home'], f'{root}.auto_script.log.txt')
 
     utils.log_comment(utils.LOGFILE, '### Pipeline start', show_date=True)
-
+    
+    if CRDS_CONTEXT is not None:
+        utils.log_comment(utils.LOGFILE,
+                          f"# export CRDS_CONTEXT='{CRDS_CONTEXT}'",
+                          show_date=True)
+                          
+        os.environ['CRDS_CONTEXT'] = CRDS_CONTEXT
+        
     ######################
     # Download data
     os.chdir(PATHS['home'])
@@ -738,7 +747,7 @@ def go(root='j010311+131615',
         grp = multifit.GroupFLT(grism_files=grism_files, direct_files=[], 
                                 ref_file=None, seg_file=seg_file, 
                                 catalog=catalog, cpu_count=-1, sci_extn=1, 
-                                pad=256)
+                                pad=(64,256))
 
         # Make drizzle model images
         grp.drizzle_grism_models(root=root, kernel='point', scale=0.15)
@@ -840,7 +849,7 @@ def go(root='j010311+131615',
         grp = multifit.GroupFLT(grism_files=grism_files, direct_files=[], 
                                 ref_file=None, seg_file=seg_file, 
                                 catalog=catalog, cpu_count=-1, sci_extn=1, 
-                                pad=256)
+                                pad=(64,256))
 
         # Make drizzle model images
         grp.drizzle_grism_models(root=root, kernel='point', scale=0.15)
@@ -881,7 +890,7 @@ def make_directories(root='j142724+334246', HOME_PATH='$PWD', paths={}):
     return paths
 
 
-def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_products={'WFPC2/WFC': ['C0M', 'C1M'], 'WFPC2/PC': ['C0M', 'C1M'], 'ACS/WFC': ['FLC'], 'WFC3/IR': ['RAW'], 'WFC3/UVIS': ['FLC']}, remove_bad=True, reprocess_parallel=False, reprocess_clean_darks=True, s3_sync=False, fetch_flt_calibs=['IDCTAB', 'PFLTFILE', 'NPOLFILE'], filters=VALID_FILTERS, min_bad_expflag=2, fetch_only=False, force_rate=True):
+def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_products={'WFPC2/WFC': ['C0M', 'C1M'], 'WFPC2/PC': ['C0M', 'C1M'], 'ACS/WFC': ['FLC'], 'WFC3/IR': ['RAW'], 'WFC3/UVIS': ['FLC']}, remove_bad=True, reprocess_parallel=False, reprocess_clean_darks=True, s3_sync=False, fetch_flt_calibs=['IDCTAB', 'PFLTFILE', 'NPOLFILE'], filters=VALID_FILTERS, min_bad_expflag=2, fetch_only=False, force_rate=True, get_rateints=False, s3path=None):
     """
     Fully automatic script
     """
@@ -958,9 +967,62 @@ def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_pr
     
     tab = tab[use_filters]
     
-    # JWST
+    # Files from s3
+    from_s3 = np.array([d.startswith('s3://') for d in tab['dataURL']])
+    
+    jw_files = []
+    
+    if s3path is not None:
+        # Prepend s3 path to filenames
+        
+        msg = f'Fetch {len(tab)} files from {s3path}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        
+        os.chdir(paths['raw'])
+        for url in tab['dataURL']:
+            s3file = os.path.join(s3path, os.path.basename(url))
+            _file = os.path.basename(s3file)
+            if os.path.exists(_file):
+                msg = f'fetch_files: {s3file} {_file} (file found)'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            else:
+                msg = f'fetch_files: {s3file} {_file}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                os.system(f'aws s3 cp {s3file} {_file}')
+            
+            if os.path.exists(_file) & _file.startswith('jw'):
+                jw_files.append(_file)
+                
+        tab = tab[:0]
+        jw &= False
+    
+    elif from_s3.sum() > 0:
+        
+        msg = f'Fetch {from_s3.sum()} files from S3'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        
+        os.chdir(paths['raw'])
+        for s3file in tab['dataURL'][from_s3]:
+            _file = os.path.basename(s3file)
+            if os.path.exists(_file):
+                msg = f'fetch_files: {s3file} {_file} (file found)'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            else:
+                msg = f'fetch_files: {s3file} {_file}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                os.system(f'aws s3 cp {s3file} {_file}')
+            
+            if os.path.exists(_file) & _file.startswith('jw'):
+                jw_files.append(_file)
+            
+        # jw &= ~from_s3
+        tab = tab[~from_s3]
+        jw &= ~from_s3
+
     if jw.sum() > 0:
-        print(f'Fetch {jw.sum()} JWST files!')
+        # JWST
+        msg = f'Fetch {jw.sum()} JWST files!'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
         os.chdir(paths['raw'])
             
@@ -970,21 +1032,40 @@ def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_pr
                 _file = os.path.basename(f).replace('nis_cal','nis_rate')
                 if not os.path.exists(_file):
                     os.system(f'aws s3 cp s3://grizli-v2/JwstDummy/{_file} .')
-            
+                
+                if os.path.exists(_file) & _file.startswith('jw'):
+                    jw_files.append(_file)
+                
         else:
-            ## Download from MAST API when data available xxx            
-            _resp = mastquery.utils.download_from_mast(tab[jw], 
-                                                       force_rate=force_rate)
-            # update targname
-            for _file in _resp:
-                _test = os.path.exists(_file) & (jwst_utils is not None)
-                _test &= ('_nis_rate' in _file)
-                if _test:
-                    jwst_utils.initialize_jwst_image(_file)
-                    jwst_utils.set_jwst_to_hst_keywords(_file, reset=True)
-                    
+            ## Download from MAST API when data available
+            mastquery.utils.LOGFILE = utils.LOGFILE   
+            _resp = mastquery.utils.download_from_mast(tab[jw],
+                                          force_rate=force_rate,
+                                          rate_ints=get_rateints)
+            
+            for i, _file in enumerate(_resp):
+                if os.path.exists(_file) & _file.startswith('jw'):
+                    jw_files.append(_file)
+
         tab = tab[~jw]
+    
+    # Initialize grism files
+    for _file in jw_files:
+        _test = os.path.exists(_file) & (jwst_utils is not None)
+        _jwst_grism = ('_nis_rate' in _file)
+        with pyfits.open(_file) as im:
+            if 'PUPIL' in im[0].header:
+                _jwst_grism |= 'GRISM' in im[0].header['PUPIL']
         
+        _test &= _jwst_grism
+    
+        if _test:
+            # Need initialization here for JWST grism exposures
+            jwst_utils.initialize_jwst_image(_file,
+                                             oneoverf_correction=False,
+                                             )
+            jwst_utils.set_jwst_to_hst_keywords(_file, reset=True)
+
     if len(tab) > 0:
         if MAST_QUERY:
             tab = query.get_products_table(tab, extensions=['RAW', 'C1M'])
@@ -2705,7 +2786,7 @@ def photutils_catalog(field_root='j142724+334246', threshold=1.8, subtract_bkg=T
     return tab
 
 
-def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=None, force_seg=None, force_cat=None, galfit=False, pad=256, files=None, gris_ref_filters=GRIS_REF_FILTERS, split_by_grism=False):
+def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=None, force_seg=None, force_cat=None, galfit=False, pad=(64,256), files=None, gris_ref_filters=GRIS_REF_FILTERS, split_by_grism=False):
     """
     Initialize a GroupFLT object from exposures in a working directory.  The 
     script tries to match mosaic images with grism exposures based on the 
@@ -2856,7 +2937,16 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
         _grism_files=list(info['FILE'][masks[key][0]])
         if masks[key][1].startswith('GRISM'):
             # NIRCAM
-            polyx = [2.1, 5.1]
+            if 'F444W' in masks[key][2].upper():
+                polyx = [2.1, 5.5, 4.4]
+            elif 'F410M' in masks[key][2].upper():
+                polyx = [2.1, 5.5, 4.1]
+            elif 'F356W' in masks[key][2].upper():
+                polyx = [2.1, 5.5, 3.6]
+            elif 'F277W' in masks[key][2].upper():
+                polyx = [2.1, 5.5, 2.8]
+            else:
+                polyx = [2.1, 5.5, 3.6]
             
         elif masks[key][1].startswith('GR150'):
             # NIRISS
@@ -2875,6 +2965,7 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
         msg += f'\nauto_script.grism_prep: seg_file = {seg_file}' 
         msg += f'\nauto_script.grism_prep: catalog  = {catalog}' 
         msg += f'\nauto_script.grism_prep: polyx  = {polyx}' 
+        msg += f'\nauto_script.grism_prep: pad  = {pad}' 
         utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
         grp_i = multifit.GroupFLT(grism_files=_grism_files,
@@ -2901,7 +2992,7 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
         return [grp]
 
 
-def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='../Extractions', ds9=None, refine_niter=3, gris_ref_filters=GRIS_REF_FILTERS, force_ref=None, files=None, split_by_grism=True, refine_poly_order=1, refine_fcontam=0.5, cpu_count=0, mask_mosaic_edges=True, prelim_mag_limit=25, refine_mag_limits=[18, 24], init_coeffs=[1.1, -0.5], grisms_to_process=None, pad=256, model_kwargs={'compute_size': True}):
+def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='../Extractions', ds9=None, refine_niter=3, gris_ref_filters=GRIS_REF_FILTERS, force_ref=None, files=None, split_by_grism=True, refine_poly_order=1, refine_fcontam=0.5, cpu_count=0, mask_mosaic_edges=True, prelim_mag_limit=25, refine_mag_limits=[18, 24], init_coeffs=[1.1, -0.5], grisms_to_process=None, pad=(64, 256), model_kwargs={'compute_size': True}, sep_background_kwargs=None, subtract_median_filter=False, median_filter_size=71, median_filter_central=10, second_pass_filtering=False, box_filter_sn=3, box_filter_width=3):
     """
     Contamination model for grism exposures
     """
@@ -2932,14 +3023,27 @@ def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='.
                                 pad=pad)
 
     for grp in grp_objects:
-
-        ################
-        # Compute preliminary model
-        grp.compute_full_model(fit_info=None, verbose=True, store=False, 
-                               mag_limit=prelim_mag_limit, coeffs=init_coeffs, 
-                               cpu_count=cpu_count,
-                               model_kwargs=model_kwargs)
-
+        
+        if subtract_median_filter:
+            
+            # Subtract a median along the dispersion direction
+            # and don't do any contamination modeling
+            refine_niter = 0
+            grp.subtract_median_filter(filter_size=median_filter_size, 
+                                       filter_central=median_filter_central,
+                                       second_pass_filtering=second_pass_filtering, 
+                                       box_filter_sn=box_filter_sn, 
+                                       box_filter_width=box_filter_width)
+            
+        else:
+            ################
+            # Compute preliminary model
+            grp.compute_full_model(fit_info=None, verbose=True, store=False, 
+                                   mag_limit=prelim_mag_limit, 
+                                   coeffs=init_coeffs, 
+                                   cpu_count=cpu_count,
+                                   model_kwargs=model_kwargs)
+        
         ##############
         # Save model to avoid having to recompute it again
         grp.save_full_data()
@@ -2968,35 +3072,41 @@ def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='.
             except:
                 utils.log_exception(utils.LOGFILE, traceback)
                 pass
-
-        ################
-        # Remove constant modal background
-        for i in range(grp.N):
-            mask = (grp.FLTs[i].model < grp.FLTs[i].grism['ERR']*0.6) 
-            mask &= (grp.FLTs[i].grism['SCI'] != 0)
-
-            # Fit Gaussian to the masked pixel distribution
-            clip = np.ones(mask.sum(), dtype=bool)
-            for iter in range(3):
-                clip_data = grp.FLTs[i].grism.data['SCI'][mask][clip]
-                n = scipy.stats.norm.fit(clip_data)
-                clip = np.abs(grp.FLTs[i].grism.data['SCI'][mask]) < 3*n[1]
+        
+        
+        # Sep background
+        if sep_background_kwargs is not None:
+            grp.subtract_sep_background(**sep_background_kwargs)
             
-            del(clip_data)
-            mode = n[0]
+        elif not subtract_median_filter:
+            ################
+            # Remove constant modal background
+            for i in range(grp.N):
+                mask = (grp.FLTs[i].model < grp.FLTs[i].grism['ERR']*0.6) 
+                mask &= (grp.FLTs[i].grism['SCI'] != 0)
 
-            logstr = '# grism_mode_bg {0} {1} {2:.4f}'
-            logstr = logstr.format(grp.FLTs[i].grism.parent_file, 
-                                   grp.FLTs[i].grism.filter, mode)
-            utils.log_comment(utils.LOGFILE, logstr, verbose=True)
+                # Fit Gaussian to the masked pixel distribution
+                clip = np.ones(mask.sum(), dtype=bool)
+                for iter in range(3):
+                    clip_data = grp.FLTs[i].grism.data['SCI'][mask][clip]
+                    n = scipy.stats.norm.fit(clip_data)
+                    clip = np.abs(grp.FLTs[i].grism.data['SCI'][mask]) < 3*n[1]
+            
+                del(clip_data)
+                mode = n[0]
 
-            try:
-                ds9.view(grp.FLTs[i].grism['SCI'] - grp.FLTs[i].model)
-            except:
-                pass
+                logstr = '# grism_mode_bg {0} {1} {2:.4f}'
+                logstr = logstr.format(grp.FLTs[i].grism.parent_file, 
+                                       grp.FLTs[i].grism.filter, mode)
+                utils.log_comment(utils.LOGFILE, logstr, verbose=True)
 
-            # Subtract
-            grp.FLTs[i].grism.data['SCI'] -= mode
+                try:
+                    ds9.view(grp.FLTs[i].grism['SCI'] - grp.FLTs[i].model)
+                except:
+                    pass
+
+                # Subtract
+                grp.FLTs[i].grism.data['SCI'] -= mode
 
         #############
         # Refine the model
@@ -3023,8 +3133,12 @@ def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='.
                                 mag_limits=refine_mag_limits,
                                 max_coeff=5, ds9=ds9, verbose=True,
                                 fcontam=refine_i,
-                                wave=np.linspace(*grp.polyx, 100)*1.e4)
-
+                                wave=np.linspace(*grp.polyx[:2], 100)*1.e4)
+        
+            # Do background again
+            if sep_background_kwargs is not None:
+                grp.subtract_sep_background(**sep_background_kwargs)
+        
         ##############
         # Save model to avoid having to recompute it again
         grp.save_full_data()
@@ -3068,7 +3182,14 @@ def refine_model_with_fits(field_root='j142724+334246', grp=None, master_files=N
         except:
             seg_file = None
 
-        grp = multifit.GroupFLT(grism_files=master_files, direct_files=[], ref_file=None, seg_file=seg_file, catalog=catalog, cpu_count=-1, sci_extn=1, pad=256)
+        grp = multifit.GroupFLT(grism_files=master_files,
+                                direct_files=[],
+                                ref_file=None,
+                                seg_file=seg_file,
+                                catalog=catalog,
+                                cpu_count=-1,
+                                sci_extn=1,
+                                pad=(64,256))
 
     fit_files = glob.glob('*full.fits')
     fit_files.sort()
@@ -3143,7 +3264,15 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
         except:
             seg_file = None
 
-        grp = multifit.GroupFLT(grism_files=master_files, direct_files=[], ref_file=None, seg_file=seg_file, catalog=catalog, cpu_count=-1, sci_extn=1, pad=256)
+        grp = multifit.GroupFLT(grism_files=master_files,
+                                direct_files=[],
+                                ref_file=None,
+                                seg_file=seg_file,
+                                catalog=catalog,
+                                cpu_count=-1,
+                                sci_extn=1,
+                                pad=(64,256)
+                                )
     else:
         init_grp = False
 
@@ -3332,7 +3461,7 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
         return True
 
 
-def generate_fit_params(field_root='j142724+334246', fitter=['nnls', 'bounded'], prior=None, MW_EBV=0.00, pline=DITHERED_PLINE, fit_only_beams=True, run_fit=True, poly_order=7, fsps=True, min_sens=0.01, sys_err=0.03, fcontam=0.2, zr=[0.05, 3.6], dz=[0.004, 0.0004], fwhm=1000, lorentz=False, include_photometry=True, use_phot_obj=False, save_file='fit_args.npy', fit_trace_shift=False, **kwargs):
+def generate_fit_params(field_root='j142724+334246', fitter=['nnls', 'bounded'], prior=None, MW_EBV=0.00, pline=DITHERED_PLINE, fit_only_beams=True, run_fit=True, poly_order=7, fsps=True, min_sens=0.01, sys_err=0.03, fcontam=0.2, zr=[0.05, 3.6], dz=[0.004, 0.0004], fwhm=1000, lorentz=False, include_photometry=True, use_phot_obj=False, save_file='fit_args.npy', fit_trace_shift=False, full_line_list=['Lya', 'OII', 'Hb', 'OIII', 'Ha', 'Ha+NII', 'SII', 'SIII','PaB','He-1083','PaA'],  **kwargs):
     """
     Generate a parameter dictionary for passing to the fitting script
     """
@@ -3345,8 +3474,12 @@ def generate_fit_params(field_root='j142724+334246', fitter=['nnls', 'bounded'],
     t0 = utils.load_templates(fwhm=fwhm, line_complexes=True, stars=False, full_line_list=None, continuum_list=None, fsps_templates=fsps, alf_template=True, lorentz=lorentz)
     t1 = utils.load_templates(fwhm=fwhm, line_complexes=False, stars=False, full_line_list=None, continuum_list=None, fsps_templates=fsps, alf_template=True, lorentz=lorentz)
 
-    args = fitting.run_all(0, t0=t0, t1=t1, fwhm=1200, zr=zr, dz=dz, fitter=fitter, group_name=field_root, fit_stacks=False, prior=prior,  fcontam=fcontam, pline=pline, min_sens=min_sens, mask_sn_limit=np.inf, fit_beams=False,  root=field_root, fit_trace_shift=fit_trace_shift, phot=phot, use_phot_obj=use_phot_obj, verbose=True, scale_photometry=False, show_beams=True, overlap_threshold=10, get_ir_psfs=True, fit_only_beams=fit_only_beams, MW_EBV=MW_EBV, sys_err=sys_err, get_dict=True)
-
+    args = fitting.run_all(0, t0=t0, t1=t1, fwhm=1200, zr=zr, dz=dz, fitter=fitter, group_name=field_root, fit_stacks=False, prior=prior,  fcontam=fcontam, pline=pline, min_sens=min_sens, mask_sn_limit=np.inf, fit_beams=False,  root=field_root, fit_trace_shift=fit_trace_shift, phot=phot, use_phot_obj=use_phot_obj, verbose=True, scale_photometry=False, show_beams=True, overlap_threshold=10, get_ir_psfs=True, fit_only_beams=fit_only_beams, MW_EBV=MW_EBV, sys_err=sys_err, get_dict=True, full_line_list=full_line_list)
+    
+    for k in kwargs:
+        if k in args:
+            args[k] = kwargs[k]
+            
     # EAZY-py photometry object from HST photometry
     try:
         import eazy.photoz
@@ -3392,12 +3525,6 @@ def summary_catalog(**kwargs):
 def fine_alignment(field_root='j142724+334246', HOME_PATH='/Volumes/Pegasus/Grizli/Automatic/', min_overlap=0.2, stopme=False, ref_err=1.e-3, radec=None, redrizzle=True, shift_only=True, maglim=[17, 24], NITER=1, catalogs=['GAIA', 'PS1', 'NSC', 'SDSS', 'WISE'], method='Powell', radius=5., program_str=None, match_str=[], all_visits=None, date=None, gaia_by_date=False, tol=None, fit_options=None, print_options={'precision': 3, 'sign': ' '}, include_internal_matches=True, master_gaia_catalog=None):
     """
     Try fine alignment from visit-based SourceExtractor catalogs
-    
-    Parameters
-    ----------
-    
-    Returns
-    -------
     
     """
     import os
@@ -4703,26 +4830,30 @@ def get_rgb_filters(filter_list, force_ir=False, pure_sort=False):
 
     # Preferred combinations
     filter_list_lower = [f.lower() for f in filter_list]
-    rpref = ['h', 'f160w', 'f140w','f444w-clear','f200w-clear','f410m-clear']
-    gpref = ['j', 'yj', 'f125w', 'f110w', 'f105w', 'f098m','f356w-clear',
-             'f150w-clear','f300m-clear']
+    rpref = ['h', 'f160w', 'f140w','f444w-clear','f410m-clear',
+             'f356w-clear','f277w-clear','f200w-clear','f150w-clear']
+    gpref = ['j', 'yj', 'f125w', 'f110w', 'f105w', 'f098m','f277w-clear',
+             'f356w-clear','f200w-clear'
+             'f150w-clear','f115w-clear',
+             'f410m-clear','f300m-clear',
+             ]
     bpref = ['opt', 'visr', 'visb', 'f814w', 'f814wu', 'f606w', 'f606wu',
              'f775w', 'f850lp', 'f435w',
-             'f090w-clear','f070w-clear','f115w-clear',
-             'f277w-clear',
+             'f115w-clear','f090w-clear','f070w-clear',
+             'f277w-clear','f150w-clear'
              ]
              
     pref_list = [None, None, None]
     has_pref = 0
     for i, pref in enumerate([rpref, gpref, bpref]):
         for f in pref:
-            if f in filter_list_lower:
+            if (f in filter_list_lower) & (f not in pref_list):
                 pref_list[i] = f
                 has_pref += 1
                 break
 
     if has_pref == 3:
-        print('Use preferred r/g/b combination: {0}'.format(pref_list))
+        print(f'# field_rgb - Use preferred r/g/b combination: {pref_list}')
         return pref_list
 
     for f in filter_list:
@@ -4842,16 +4973,82 @@ def get_rgb_filters(filter_list, force_ir=False, pure_sort=False):
 
 TICKPARAMS = dict(axis='both', colors='w', which='both')
 
-def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', show_ir=True, pl=1, pf=1, scl=1, scale_ab=None, rgb_scl=[1, 1, 1], ds9=None, force_ir=False, filters=None, add_labels=True, output_format='jpg', rgb_min=-0.01, xyslice=None, pure_sort=False, verbose=True, force_rgb=None, suffix='.field', mask_empty=False, tick_interval=60, timestamp=False, mw_ebv=0, use_background=False, tickparams=TICKPARAMS, fill_black=False, ref_spectrum=None, gzext='', full_dimensions=False, invert=False, get_rgb_array=False, get_images=False):
+# Good options for asinh norm_kwargs 
+ASINH_NORM =  {'stretch': 'asinh',
+               'min_cut': -0.02, 'max_cut': 1.0, 
+               'clip':True, 'asinh_a':0.03}
+
+def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', show_ir=True, pl=1, pf=1, scl=1, scale_ab=None, rgb_scl=[1, 1, 1], ds9=None, force_ir=False, filters=None, add_labels=True, output_format='jpg', rgb_min=-0.01, xyslice=None, pure_sort=False, verbose=True, force_rgb=None, suffix='.field', mask_empty=False, tick_interval=60, timestamp=False, mw_ebv=0, use_background=False, tickparams=TICKPARAMS, fill_black=False, ref_spectrum=None, gzext='', full_dimensions=False, use_imsave=True, invert=False, get_rgb_array=False, get_images=False, norm_kwargs=None):
     """
     RGB image of the field mosaics
+    
+    Parameters
+    ----------
+    
+    root : str
+        Field rootname
+    
+    xsize : float
+        Figure size
+    
+    output_dpi : int
+        Figure DPI
+    
+    HOME_PATH : str
+        Path to look for mosaic files
+    
+    show_ir : bool
+        Clip around WFC3/IR
+    
+    pl : float
+        Images are scaled by a factor `PHOTPLAM**pl`
+    
+    pf : float
+        Images are scaled by a factor `PHOTFLAM**pf`.  Flat f-nu would be
+        `pl=2`, `pf=1`.
+    
+    scl : float
+        All images are scaled by this factor
+    
+    scale_ab : float
+    
+    rgb_scl : [float, float, float]
+        Separate scaling for [r,g,b] channels
+    
+    ds9 : `grizli.ds9.DS9`
+        Load arrays in DS9
+    
+    force_ir : bool
+    
+    filters : list
+        Specific list of filters
+    
+    add_labels : bool
+        Add labels to the plot
+    
+    verbose : bool
+        Status messaging
+    
+    force_rgb : list
+        Filenames of specific [r,g,b] images
+    
+    suffix : str
+        Suffix of the output figure
+    
+    norm_kwargs : dict
+        Keyword arguments for `astropy.visualization.simple_norm`, e.g.,
+        ``{'stretch': 'asinh', 'min_cut': -0.05, 'max_cut': 0.1}``
+    
     """
 
     import matplotlib.pyplot as plt
     from matplotlib.ticker import MultipleLocator
 
+    import skimage
+
     #import montage_wrapper
     from astropy.visualization import make_lupton_rgb
+    from astropy.visualization import simple_norm
 
     try:
         from .. import utils
@@ -4859,23 +5056,27 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
         from grizli import utils
 
     if HOME_PATH is not None:
-        phot_file = '{0}/{1}/Prep/{1}_phot.fits'.format(HOME_PATH, root)
+        phot_file = f'{HOME_PATH}/{root}/Prep/{root}_phot.fits'
         if not os.path.exists(phot_file):
-            print('Photometry file {0} not found.'.format(phot_file))
+            print(f'Photometry file {phot_file} not found.')
             return False
 
         phot = utils.GTable.gread(phot_file)
-        sci_files = glob.glob('{0}/{1}/Prep/{1}-[ofuvyjh]*sci.fits{2}'.format(HOME_PATH, root, gzext))
+        PATH_TO = f'{HOME_PATH}/{root}/Prep'
+        sci_files = glob.glob(f'{PATH_TO}/{root}-[ofuvyjh]*sci.fits{gzext}')
 
-        PATH_TO = '{0}/{1}/Prep'.format(HOME_PATH, root)
     else:
         PATH_TO = './'
-        sci_files = glob.glob('./{1}-[fuvyjho]*sci.fits{2}'.format(PATH_TO, root, gzext))
+        sci_files = glob.glob(f'./{root}-[fuvyjho]*sci.fits{gzext}')
 
-    print('PATH: {0}, files:{1}'.format(PATH_TO, sci_files))
+    print(f'PATH: {PATH_TO}, files: {sci_files}')
 
     if filters is None:
-        filters = [file.split('_')[-3].split('-')[-1] for file in sci_files]
+        filters = [file.replace('-clear','xclear').replace('clear-','clearx').split('_')[-3].split('-')[-1]
+                   for file in sci_files]
+        
+        filters = [f.replace('xclear','-clear').replace('clearx','clear-')
+                   for f in filters]
         if show_ir:
             filters += ['ir']
 
@@ -4884,9 +5085,9 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
     ims = {}
     for f in filters:
         try:
-            img = glob.glob('{0}/{1}-{2}_dr?_sci.fits{3}'.format(PATH_TO, root, f, gzext))[0]
+            img = glob.glob(f'{PATH_TO}/{root}-{f}_dr?_sci.fits{gzext}')[0]
         except:
-            print('Failed: {0}/{1}-{2}_dr?_sci.fits{3}'.format(PATH_TO, root, f, gzext))
+            print(f'Failed: {PATH_TO}/{root}-{f}_dr?_sci.fits{gzext}')
 
         try:
             ims[f] = pyfits.open(img)
@@ -4912,7 +5113,8 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
     minor = MultipleLocator(tick_interval/pscale)
 
     if force_rgb is None:
-        rf, gf, bf = get_rgb_filters(filters, force_ir=force_ir, pure_sort=pure_sort)
+        rf, gf, bf = get_rgb_filters(filters, force_ir=force_ir, 
+                                     pure_sort=pure_sort)
     else:
         rf, gf, bf = force_rgb
     
@@ -4931,7 +5133,24 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
             rgb_scl = [1.4, 1., 0.35]
         elif _rgbf == ['f444w-clear', 'f356w-clear', 'f200w-clear']:
             rgb_scl = [1.4, 1., 0.35]
+        elif _rgbf == ['f444w-clear','f200w-clear','f115w-clear']:
+            rgb_scl = [2, 1.1, 1.0]
+        elif _rgbf == ['f444w-clear','f200w-clear','f115w-clear']:
+            rgb_scl = [2, 1.1, 1.0]
+        elif _rgbf == ['f356w-clear','f200w-clear','f115w-clear']:
+            rgb_scl = [2, 1.1, 1.0]
+        elif _rgbf == ['f444w-clear','f277w-clear','f115w-clear']:
+            rgb_scl = [2, 1.5, 1.0]
+        else:
+            # Mix of SW/LW: [LW=2, SW=1]
             
+            rgb_scl = [1,1,1]
+            clear = np.array(['clear' in f for f in _rgbf])
+            lw = np.array(_rgbf) > 'f260w'
+            if clear.sum() == 3:
+                rgb_scl = (lw*1+1)
+                rgb_scl = (rgb_scl/rgb_scl.min()).tolist()
+                
     logstr = '# field_rgb {0}: r {1} / g {2} / b {3}\n'
     logstr += '# field_rgb scl={7:.2f} / r {4:.2f} / g {5:.2f} / b {6:.2f}'
     logstr = logstr.format(root, *_rgbf, *rgb_scl, scl)
@@ -4951,11 +5170,12 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
     else:
         MW_F99 = None
 
-    rimg = ims[rf][0].data * (ims[rf][0].header['PHOTFLAM']/5.e-20)**pf * (ims[rf][0].header['PHOTPLAM']/1.e4)**pl*scl*rgb_scl[0]
+    rimg = ims[rf][0].data * (ims[rf][0].header['PHOTFLAM']/5.e-20)**pf
+    rimg *= (ims[rf][0].header['PHOTPLAM']/1.e4)**pl*scl*rgb_scl[0]
 
     if MW_F99 is not None:
         rmw = 10**(0.4*(MW_F99(np.array([ims[rf][0].header['PHOTPLAM']]))))[0]
-        print('MW_EBV={0:.3f}, {1}: {2:.2f}'.format(mw_ebv, rf, rmw))
+        print(f'MW_EBV={mw_ebv:.3f}, {rf}: {rmw:.2f}')
         rimg *= rmw
 
     if bf == 'sum':
@@ -4963,10 +5183,12 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
     elif bf == rf:
         bimg = rimg
     else:
-        bimg = ims[bf][0].data * (ims[bf][0].header['PHOTFLAM']/5.e-20)**pf * (ims[bf][0].header['PHOTPLAM']/1.e4)**pl*scl*rgb_scl[2]
+        bimg = ims[bf][0].data * (ims[bf][0].header['PHOTFLAM']/5.e-20)**pf 
+        bimg *= (ims[bf][0].header['PHOTPLAM']/1.e4)**pl*scl*rgb_scl[2]
         if MW_F99 is not None:
-            bmw = 10**(0.4*(MW_F99(np.array([ims[bf][0].header['PHOTPLAM']]))))[0]
-            print('MW_EBV={0:.3f}, {1}: {2:.2f}'.format(mw_ebv, bf, bmw))
+            plam = ims[bf][0].header['PHOTPLAM']
+            bmw = 10**(0.4*(MW_F99(np.array([plam]))))[0]
+            print(f'MW_EBV={mw_ebv:.3f}, {bf}: {bmw:.2f}')
             bimg *= bmw
     
     # Double-acs
@@ -4987,8 +5209,9 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
                     
         gimg = ims[gf][0].data * gscl * scl * rgb_scl[1]  # * 1.5
         if MW_F99 is not None:
-            gmw = 10**(0.4*(MW_F99(np.array([ims[gf][0].header['PHOTPLAM']]))))[0]
-            print('MW_EBV={0:.3f}, {1}: {2:.2f}'.format(mw_ebv, gf, gmw))
+            plam = ims[gf][0].header['PHOTPLAM']
+            gmw = 10**(0.4*(MW_F99(np.array([plam]))))[0]
+            print(f'MW_EBV={mw_ebv:.3f}, {gf}: {gmw:.2f}')
             gimg *= gmw
     
     rmsk = rimg == 0
@@ -5007,16 +5230,18 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
         try:
             _obsm = [utils.get_filter_obsmode(filter=_f) for _f in [rf, gf, bf]]
             _bp = [S.ObsBandpass(_m) for _m in _obsm]
-            _bpf = [ref_spectrum.integrate_filter(_b)/_b.pivot()**2 for _b in _bp]
+            _bpf = [ref_spectrum.integrate_filter(_b)/_b.pivot()**2
+                    for _b in _bp]
             gimg *= _bpf[0]/_bpf[1]
             bimg *= _bpf[0]/_bpf[2]
-            print('ref_spectrum supplied: {0}*{1:.2f} {2}*{3:.2f}'.format(gf, _bpf[0]/_bpf[1], bf, _bpf[0]/_bpf[2]))
+            msg = 'ref_spectrum supplied: {0}*{1:.2f} {2}*{3:.2f}'
+            print(msg.format(gf, _bpf[0]/_bpf[1], bf, _bpf[0]/_bpf[2]))
         except:
             pass
             
     if mask_empty:
         mask = rmsk | gmsk | bmsk
-        print('Mask empty pixels in any channel: {0}'.format(mask.sum()))
+        print(f'Mask empty pixels in any channel: {mask.sum()}')
 
         rimg[mask] = 0
         gimg[mask] = 0
@@ -5043,7 +5268,11 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
 
         ds9.set('rgb channel red')
         ds9.set('rgb lock colorbar')
-
+        
+        gc.collect()
+        for k in ims:
+            ims[k].close()
+            
         return False
 
     xsl = ysl = None
@@ -5078,67 +5307,124 @@ def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', s
                 bmsk = bmsk[ysl, xsl]
     
     if get_images:
-        return (rimg, gimg, bimg), (rf, gf, bf)
-                    
-    image = make_lupton_rgb(rimg, gimg, bimg, stretch=0.1, minimum=rgb_min)
-    if invert:
-        image = 255-image
+        gc.collect()
+        for k in ims:
+            ims[k].close()
         
+        return (rimg, gimg, bimg), (rf, gf, bf)
+    
+    if norm_kwargs is None:
+        image = make_lupton_rgb(rimg, gimg, bimg, stretch=0.1, minimum=rgb_min)
+        
+        if invert:
+            image = 255-image
+        
+    else:
+        msg = f'# field_rgb norm with {norm_kwargs}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=verbose)
+             
+        sh = rimg.shape
+        image = np.zeros((sh[0], sh[1], 3))
+        image[:,:,0] = rimg
+        image[:,:,1] = gimg
+        image[:,:,2] = bimg
+        norm = simple_norm(image, **norm_kwargs)
+        
+        image = norm(image).filled(0)
+        if invert:
+            image = 255 - np.clip(np.cast[int](image*255), 0, 255)
+                    
     if fill_black:
         image[rmsk,0] = 0
         image[gmsk,1] = 0
         image[bmsk,2] = 0
         
     if get_rgb_array:
+        gc.collect()
+        for k in ims:
+            ims[k].close()
+        
         return image
     
     sh = image.shape
     ny, nx, _ = sh
             
     if full_dimensions:
+        # Turn off interactive plotting
+        plt.ioff()
         dpi = int(nx/xsize)
         xsize = nx/dpi
-        #print('xsize: ', xsize, ny, nx, dpi)
-        
+    
     elif (output_dpi is not None):
         xsize = nx/output_dpi
-
-    dim = [xsize, xsize/nx*ny]
-
-    fig, ax = plt.subplots(1,1,figsize=dim)
-
-    ax.imshow(image, origin='lower', extent=(-nx/2, nx/2, -ny/2, ny/2))
-
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-
-    ax.xaxis.set_major_locator(minor)
-    ax.yaxis.set_major_locator(minor)
-
-    #ax.tick_params(axis='x', colors='w', which='both')
-    #ax.tick_params(axis='y', colors='w', which='both')
-    if tickparams:
-        ax.tick_params(**tickparams)
-
-    if add_labels:
-        ax.text(0.03, 0.97, root, bbox=dict(facecolor='w', alpha=0.8), size=10, ha='left', va='top', transform=ax.transAxes)
-
-        ax.text(0.06+0.08*2, 0.02, rf, color='r', bbox=dict(facecolor='w', alpha=1), size=8, ha='center', va='bottom', transform=ax.transAxes)
-        ax.text(0.06+0.08, 0.02, gf, color='g', bbox=dict(facecolor='w', alpha=1), size=8, ha='center', va='bottom', transform=ax.transAxes)
-        ax.text(0.06, 0.02, bf, color='b', bbox=dict(facecolor='w', alpha=1), size=8, ha='center', va='bottom', transform=ax.transAxes)
+        dpi = output_dpi
     
-    if timestamp:
-        fig.text(0.97, 0.03, time.ctime(), ha='right', va='bottom', fontsize=5, transform=fig.transFigure, color='w')
+    dim = [xsize, xsize/nx*ny]
+    
+    if not use_imsave:
+        fig, ax = plt.subplots(1,1,figsize=dim, dpi=dpi)
 
+        ax.imshow(image, origin='lower', extent=(-nx/2, nx/2, -ny/2, ny/2))
+
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+        ax.xaxis.set_major_locator(minor)
+        ax.yaxis.set_major_locator(minor)
+
+        #ax.tick_params(axis='x', colors='w', which='both')
+        #ax.tick_params(axis='y', colors='w', which='both')
+        if tickparams:
+            ax.tick_params(**tickparams)
+
+        if add_labels:
+            ax.text(0.03, 0.97, root,
+                    bbox=dict(facecolor='w', alpha=0.8),
+                    size=10, ha='left', va='top', transform=ax.transAxes)
+
+            ax.text(0.06+0.08*2, 0.02, rf, color='r',
+                    bbox=dict(facecolor='w', alpha=1),
+                    size=8, ha='center', va='bottom',
+                    transform=ax.transAxes)
+                
+            ax.text(0.06+0.08, 0.02, gf, color='g',
+                    bbox=dict(facecolor='w', alpha=1),
+                    size=8, ha='center', va='bottom',
+                    transform=ax.transAxes)
+                
+            ax.text(0.06, 0.02, bf, color='b',
+                    bbox=dict(facecolor='w', alpha=1),
+                    size=8, ha='center', va='bottom',
+                    transform=ax.transAxes)
+    
+        if timestamp:
+            fig.text(0.97, 0.03, time.ctime(),
+                     ha='right', va='bottom', fontsize=5,
+                     transform=fig.transFigure, color='w')
+    else:
+        fig = None
+    
     if full_dimensions:
-        ax.axis('off')
-        fig.tight_layout(pad=0)
-        dpi = int(nx/xsize/full_dimensions)
-        fig.savefig('{0}{1}.{2}'.format(root, suffix, output_format), dpi=dpi)
+        if use_imsave:
+            skimage.io.imsave(f'{root}{suffix}.{output_format}',
+                       image[::-full_dimensions*1,::full_dimensions*1,:],
+                       plugin='pil', quality=95)
+        else:
+            ax.axis('off')
+            fig.tight_layout(pad=0)
+            dpi = int(nx/xsize/full_dimensions)
+        
+            fig.savefig(f'{root}{suffix}.{output_format}', dpi=dpi)
+            plt.close(fig)
+        
     else:
         fig.tight_layout(pad=0.1)
-        fig.savefig('{0}{1}.{2}'.format(root, suffix, output_format))
+        fig.savefig(f'{root}{suffix}.{output_format}')
     
+    gc.collect()
+    for k in ims:
+        ims[k].close()
+
     return xsl, ysl, (rf, gf, bf), fig
 
 #########
