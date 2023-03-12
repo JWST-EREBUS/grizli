@@ -1422,7 +1422,7 @@ def load_visit_info(root='j033216m2743', path='./', verbose=True):
     return visits, groups, info
 
 
-def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, combine_same_pa=True, combine_minexp=2, is_dash=False, filters=VALID_FILTERS, max_dt=1e9, visit_split_shift=1.5, file_query='*'):
+def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, combine_same_pa=True, combine_minexp=2, is_dash=False, filters=VALID_FILTERS, max_dt=1e9, visit_split_shift=1.5, file_query='*',jwst_detector=True):
 
     """
     Organize exposures into "visits" by filter / position / PA / epoch
@@ -1519,7 +1519,7 @@ def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, com
     #         hdu.flush()
     #         hdu.close()
             
-    info = utils.get_flt_info(files)
+    info = utils.get_flt_info(files,jwst_detector=jwst_detector)
 
     # Only F814W on ACS
     if ONLY_F814W:
@@ -2929,7 +2929,9 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
                 ref_file = _fstr.format(field_root, ref.lower())
             else:
                 _fstr = '{0}-{1}_dr*_sci.fits*'
-                ref_file = _fstr.format(field_root, ref.lower())                
+                ref_file = _fstr.format(field_root, ref.lower())
+                print(ref)
+                print(ref_file)              
                 ref_file = glob.glob(ref_file)[0]
         else:
             ref_file = force_ref
@@ -3316,12 +3318,12 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
 
     # Use "binning" templates for standardized extraction
     if oned_R:
-        bin_steps, step_templ = utils.step_templates(wlim=[5000, 18000.0],
+        bin_steps, step_templ = utils.step_templates(wlim=[5000, 5e4],
                                                      R=oned_R, round=10)
         init_templates = step_templ
     else:
         # Polynomial templates
-        wave = np.linspace(2000, 2.5e4, 100)
+        wave = np.linspace(2000, 5e4, 200)
         poly_templ = utils.polynomial_templates(wave, order=poly_order)
         init_templates = poly_templ
 
@@ -3403,7 +3405,7 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
         except:
             continue
 
-        hdu, fig = mb.drizzle_grisms_and_PAs(fcontam=0.5, flambda=False, kernel='point', size=32, tfit=tfit, diff=diff)
+        hdu, fig = mb.drizzle_grisms_and_PAs(fcontam=0.5, flambda=False, kernel='point', size=size, tfit=tfit, diff=diff)
         fig.savefig('{0}_{1:05d}.stack.png'.format(target, id))
 
         hdu.writeto('{0}_{1:05d}.stack.fits'.format(target, id),

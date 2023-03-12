@@ -603,7 +603,7 @@ def get_config_filename(instrume='WFC3', filter='F140W',
         #             f'CONF/GRISM_NIRCAM/V2/NIRCAM_{fi}_mod{module}_{gr}.conf')
 
         conf_file = os.path.join(GRIZLI_PATH,
-                    f'CONF/GRISM_NIRCAM/V4/NIRCAM_{fi}_mod{module}_{gr}.conf')
+                    f'CONF/GRISM_NIRCAM/V5/NIRCAM_{fi}_mod{module}_{gr}.conf')
         
     elif instrume == 'NIRCAMA':
         fi = grism
@@ -1069,6 +1069,9 @@ def load_grism_config(conf_file, warnings=True):
         conf = TransformGrismconf(conf_file)
         conf.get_beams()
     elif 'V4/NIRCAM' in conf_file:
+        conf = TransformGrismconf(conf_file)
+        conf.get_beams()
+    elif 'V5/NIRCAM' in conf_file:
         conf = TransformGrismconf(conf_file)
         conf.get_beams()
     elif 'V5/NIRCAM' in conf_file:
