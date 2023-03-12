@@ -6844,7 +6844,7 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
         if ('reference' in group) & (align_north):
             AstroDrizzle(input_files, output=group['product'],
                      clean=True, context=context, preserve=False,
-                     skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
+                     skysub=skysub, skyuser=skyuser, skymethod=skymethod,
                      driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,
                      median=run_driz_cr, blot=run_driz_cr,
                      driz_cr=run_driz_cr,
@@ -6863,7 +6863,7 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
             print('### Run final drizzle without reference, final_rot={0}'.format(final_rot))
             AstroDrizzle(input_files, output=group['product'],
                      clean=True, context=context, preserve=False,
-                     skysub=skysub, sky_bits=bits, skyuser=skyuser, skymethod=skymethod,
+                     skysub=skysub, skyuser=skyuser, skymethod=skymethod,
                      driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,driz_sep_pixfrac=pixfrac,driz_sep_bits=bits,
                      median=run_driz_cr, blot=run_driz_cr,
                      driz_cr=run_driz_cr,
