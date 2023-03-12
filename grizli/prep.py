@@ -4525,7 +4525,8 @@ def process_direct_grism_visit(direct={},
                                      extra_wfc3ir_badpix=True,
                                      verbose=False,
                                      scale_photom=False,
-                                     calc_wcsmap=False)
+                                     calc_wcsmap=False,
+                                     clean_negative=True,)
                        
         _sci, _wht, _hdr, _files, _info = _
         _drcfile = glob.glob(f"{direct['product']}_dr*sci.fits")[0]

@@ -5530,7 +5530,8 @@ def drizzle_from_visit(visit, output=None, pixfrac=1., kernel='point',
                        verbose=True,
                        scale_photom=True,
                        calc_wcsmap=False,
-                       niriss_ghost_kwargs={}):
+                       niriss_ghost_kwargs={},
+                       clean_negative=False,):
     """
     Make drizzle mosaic from exposures in a visit dictionary
     
@@ -5577,6 +5578,9 @@ def drizzle_from_visit(visit, output=None, pixfrac=1., kernel='point',
     niriss_ghost_kwargs : dict
         Keyword arguments for `~grizli.utils.niriss_ghost_mask`
     
+    clean_negative: bool
+        If True, set negative pixels beyond 5 sigma to zero.
+
     Returns
     -------
     outsci : array-like
@@ -5731,7 +5735,7 @@ def drizzle_from_visit(visit, output=None, pixfrac=1., kernel='point',
                 bpdata |= _ghost*1024
             
             # Negative
-            if 'MDRIZSKY' in flt['SCI'].header:
+            if ('MDRIZSKY' in flt['SCI'].header) and clean_negative:
                 _low = ((flt['SCI'].data - flt['SCI'].header['MDRIZSKY']) < 
                       -5*flt['ERR'].data)
                 msg = f'Extra -5 sigma low pixels: N= {_low.sum()} '
