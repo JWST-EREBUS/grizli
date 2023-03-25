@@ -50,6 +50,7 @@ GRISM_COLORS = {'G800L': (0.0, 0.4470588235294118, 0.6980392156862745),
       'none': (0.8, 0.4745098039215686, 0.6549019607843137),
       'G150': 'k',
       'F277W': (0.0, 0.6196078431372549, 0.45098039215686275),
+      'F322W2':'aqua',
       'F356W': (0.8352941176470589, 0.3686274509803922, 0.0),
       'F444W': (0.8, 0.4745098039215686, 0.6549019607843137),
       'F410M': (0.0, 0.4470588235294118, 0.6980392156862745),
@@ -8542,8 +8543,8 @@ def remove_text_labels(fig):
                 if child.get_text(): # Don't remove empty labels
                     child.set_visible(False)
 
-    
-LOGFILE = '/tmp/grizli.log'
+
+LOGFILE = 'grizli.log'
 
 
 def log_function_arguments(LOGFILE, frame, func='func', verbose=True):

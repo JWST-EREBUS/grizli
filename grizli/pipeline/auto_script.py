@@ -18,7 +18,7 @@ import astropy.wcs as pywcs
 from .. import prep, utils
 from .default_params import UV_N_FILTERS, UV_M_FILTERS, UV_W_FILTERS
 from .default_params import OPT_N_FILTERS, OPT_M_FILTERS, OPT_W_FILTERS
-from .default_params import IR_N_FILTERS, IR_M_FILTERS, IR_W_FILTERS
+from .default_params import IR_N_FILTERS, IR_M_FILTERS, IR_W_FILTERS,NIRCAM_LW_FILTERS,NIRCAM_SW_FILTERS
 from .default_params import ALL_IMAGING_FILTERS, VALID_FILTERS
 from .default_params import UV_GRISMS, OPT_GRISMS, IR_GRISMS, GRIS_REF_FILTERS
 
@@ -2862,7 +2862,7 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
     
     # NIRCam
     for ig, gr in enumerate(['GRISMR','GRISMC']):
-        for filt in ['F277W', 'F356W', 'F410M', 'F444W']:
+        for filt in ['F277W','F322W2', 'F356W', 'F410M', 'F444W']:
             #key = f'{gr.lower()}-{filt.lower()}'
             key = filt.lower() + '-clear'
             if key in masks:
@@ -3380,7 +3380,7 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
             if (np.max((b.model/b.grism['ERR'])[b.fit_mask.reshape(b.sh)]) > sn_lim) | (sn_lim > 100):
                 print(' Fit trace shift: \n')
                 try:
-                    shift = mb.fit_trace_shift(tol=1.e-3, verbose=True, split_groups=True, lm=True)
+                    shift = mb.fit_trace_shift(tol=1.e-3, verbose=True, split_groups=True, lm=False)
                 except:
                     pass
 

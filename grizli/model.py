@@ -1467,10 +1467,15 @@ class ImageData(object):
 
             if 'PUPIL' in h:
                 pupil = h['PUPIL']
-            
+
             if not module:
                 if 'MODULE' in h:
                     module = h['MODULE']
+                elif 'DETECTOR' in h:
+                    if h['DETECTOR'] != 'NIS':
+                        module = h['DETECTOR'][3]
+                    else: 
+                        module = None
                 else:
                     module = None
                 
@@ -3072,8 +3077,7 @@ class GrismFLT(object):
                     except ValueError:
                         return False
 
-                    size += 4
-                    # size += 80
+                    size += 50
 
                     # Enforce minimum size
                     # size = np.maximum(size, 16)
@@ -3104,6 +3108,12 @@ class GrismFLT(object):
                 xc, yc = int(np.round(x))+1, int(np.round(y))+1
                 xcenter = -(x-(xc-1))
                 ycenter = -(y-(yc-1))
+
+            # add offset to xcenter to match the wavelength of unfold-jwst
+            if self.direct.module == 'A':
+                xcenter += -0.6
+            elif self.direct.module == 'B':
+                xcenter += 0.5
 
             origin = [yc-size + self.direct.origin[0],
                       xc-size + self.direct.origin[1]]
@@ -3758,12 +3768,22 @@ class GrismFLT(object):
                 rot = -1
 
         elif self.grism.instrument in ['NIRCAM', 'NIRCAMA']:
-            #  Module A
             if self.grism.pupil == 'GRISMC':
-                rot = 1
+                if self.grism.module == 'A':
+                    rot = 1
+                elif self.grism.module == 'B':
+                    rot = 1
+            elif self.grism.pupil == 'GRISMR':
+                if self.grism.module == 'A':
+                    return True
+                elif self.grism.module == 'B':
+                    rot = 2
             else:
-                # Do nothing, A+GRISMR disperses to +x
-                return True
+                # Module B
+                if self.grism.pupil == 'GRISMC':
+                    rot = 1
+                else:
+                    rot = 2
 
         elif self.grism.instrument == 'NIRCAMB':
             if self.grism.pupil == 'GRISMC':
