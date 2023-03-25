@@ -50,6 +50,7 @@ GRISM_COLORS = {'G800L': (0.0, 0.4470588235294118, 0.6980392156862745),
       'none': (0.8, 0.4745098039215686, 0.6549019607843137),
       'G150': 'k',
       'F277W': (0.0, 0.6196078431372549, 0.45098039215686275),
+      'F322W2':'aqua',
       'F356W': (0.8352941176470589, 0.3686274509803922, 0.0),
       'F444W': (0.8, 0.4745098039215686, 0.6549019607843137),
       'F410M': (0.0, 0.4470588235294118, 0.6980392156862745),
@@ -75,26 +76,34 @@ GRISM_MAJOR = {'G102': 0.1, 'G141': 0.1, # WFC3/IR
                'GRISM':0.1, 'G150':0.1  # Roman
                }
 
+# ----zihao modified----
+# Change GRISM_LIMITS for NIRCam filters.
 GRISM_LIMITS = {'G800L': [0.545, 1.02, 40.],  # ACS/WFC
-          'G280': [0.2, 0.4, 14],  # WFC3/UVIS
-           'G102': [0.77, 1.18, 23.],  # WFC3/IR
-           'G141': [1.06, 1.73, 46.0],
-           'GRISM': [0.98, 1.98, 11.],  # WFIRST/Roman
-           'G150': [0.98, 1.98, 11.],  
-           'F090W': [0.76, 1.04, 45.0],  # NIRISS
-           'F115W': [0.97, 1.32, 45.0],
-           'F140M': [1.28, 1.52, 45.0],
-           'F158M': [1.28, 1.72, 45.0],
-           'F150W': [1.28, 1.72, 45.0],
-           'F200W': [1.68, 2.30, 45.0],
-           'F140M': [1.20, 1.60, 45.0],
-           'CLEARP': [0.76, 2.3, 45.0],
-           'F277W': [2.5, 3.2, 20.],  # NIRCAM
-           'F356W': [3.05, 4.1, 20.],
-           'F444W': [3.82, 5.08, 20],
-           'F410M': [3.8, 4.38, 20],
-           'BLUE': [0.8, 1.2, 10.],  # Euclid
-           'RED': [1.1, 1.9, 14.]}
+                'G280': [0.2, 0.4, 14],  # WFC3/UVIS
+                'G102': [0.77, 1.18, 23.],  # WFC3/IR
+                'G141': [1.06, 1.73, 46.0],
+                'GRISM': [0.98, 1.98, 11.],  # WFIRST/Roman
+                'G150': [0.98, 1.98, 11.],  
+                'F090W': [0.76, 1.04, 45.0],  # NIRISS
+                'F115W': [0.97, 1.32, 45.0],
+                'F140M': [1.28, 1.52, 45.0],
+                'F158M': [1.28, 1.72, 45.0],
+                'F150W': [1.28, 1.72, 45.0],
+                'F200W': [1.68, 2.30, 45.0],
+                'F140M': [1.20, 1.60, 45.0],
+                'CLEARP': [0.76, 2.3, 45.0],
+                'F277W': [2.5, 3.2, 10.], # NIRCAM
+                'F356W': [3.05, 4.1, 10.],
+                'F444W': [3.82, 5.08, 10],
+                'F410M': [3.8, 4.38, 10],
+                'F322W2':[2.4, 4.0, 10],
+                #    'F277W': [2.5, 3.2, 20.],
+                #    'F356W': [3.05, 4.1, 20.],
+                #    'F444W': [3.82, 5.08, 20],
+                #    'F410M': [3.8, 4.38, 20],
+                #    'F322W2':[2.4, 4.0, 20],
+                'BLUE': [0.8, 1.2, 10.],  # Euclid
+                'RED': [1.1, 1.9, 14.]}
 
 #DEFAULT_LINE_LIST = ['PaB', 'HeI-1083', 'SIII', 'OII-7325', 'ArIII-7138', 'SII', 'Ha+NII', 'OI-6302', 'HeI-5877', 'OIII', 'Hb', 'OIII-4363', 'Hg', 'Hd', 'H8','H9','NeIII-3867', 'OII', 'NeVI-3426', 'NeV-3346', 'MgII','CIV-1549', 'CIII-1908', 'OIII-1663', 'HeII-1640', 'NIII-1750', 'NIV-1487', 'NV-1240', 'Lya']
 
@@ -5522,7 +5531,8 @@ def drizzle_from_visit(visit, output=None, pixfrac=1., kernel='point',
                        verbose=True,
                        scale_photom=True,
                        calc_wcsmap=False,
-                       niriss_ghost_kwargs={}):
+                       niriss_ghost_kwargs={},
+                       clean_negative=False,):
     """
     Make drizzle mosaic from exposures in a visit dictionary
     
@@ -5569,6 +5579,9 @@ def drizzle_from_visit(visit, output=None, pixfrac=1., kernel='point',
     niriss_ghost_kwargs : dict
         Keyword arguments for `~grizli.utils.niriss_ghost_mask`
     
+    clean_negative: bool
+        If True, set negative pixels beyond 5 sigma to zero.
+
     Returns
     -------
     outsci : array-like
@@ -5723,7 +5736,7 @@ def drizzle_from_visit(visit, output=None, pixfrac=1., kernel='point',
                 bpdata |= _ghost*1024
             
             # Negative
-            if 'MDRIZSKY' in flt['SCI'].header:
+            if ('MDRIZSKY' in flt['SCI'].header) and clean_negative:
                 _low = ((flt['SCI'].data - flt['SCI'].header['MDRIZSKY']) < 
                       -5*flt['ERR'].data)
                 msg = f'Extra -5 sigma low pixels: N= {_low.sum()} '
@@ -8530,8 +8543,8 @@ def remove_text_labels(fig):
                 if child.get_text(): # Don't remove empty labels
                     child.set_visible(False)
 
-    
-LOGFILE = '/tmp/grizli.log'
+
+LOGFILE = 'grizli.log'
 
 
 def log_function_arguments(LOGFILE, frame, func='func', verbose=True):

@@ -1220,7 +1220,10 @@ class StackedSpectrum(object):
         self.is_flambda = self.header['ISFLAM']
         self.conf_file = self.header['CONF']
         try:
-            self.conf = grismconf.aXeConf(self.conf_file)
+            if "NIRCAM" in self.conf_file:
+                self.conf = grismconf.TransformGrismconf(self.conf_file)
+            else:
+                self.conf = grismconf.aXeConf(self.conf_file)
         except:
             # Try global path
             base = os.path.basename(self.conf_file)
@@ -1323,7 +1326,7 @@ class StackedSpectrum(object):
         w = (np.arange(h['NAXIS1'])+1-h['CRPIX1'])*h['CD1_1'] + h['CRVAL1']
 
         # Now header keywords scaled to microns
-        if w.max() < 3:
+        if w.max() < 5.5:
             w *= 1.e4
 
         return w

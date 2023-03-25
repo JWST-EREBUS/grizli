@@ -696,6 +696,10 @@ def match_lists(input, output, transform=None, scl=3600., simple=True,
         msg = '  tristars.match: Nin={0}, Nout={1}, match={2}'
         print(msg.format(len(input), len(output), len(output_ix)))
 
+        if len(output_ix) == 0:
+            print('No matches!')
+            raise ValueError('No matches!')
+
         # if False:
         #     fig = match.match_diagnostic_plot(input, output, pair_ix, tf=None, new_figure=True)
         #     fig.savefig('/tmp/xtristars.png')
@@ -729,15 +733,19 @@ def match_lists(input, output, transform=None, scl=3600., simple=True,
     tf.estimate(input[input_ix, :], output[output_ix])
 
     if not simple:
+        min_samples = min(3, input[input_ix, :].shape[1])
+        print('  RANSAC: min_samples={0}'.format(min_samples))
         model, inliers = ransac((input[input_ix, :], output[output_ix, :]),
-                                   transform, min_samples=3,
+                                   transform, min_samples=min_samples,
                                    residual_threshold=3, max_trials=100)
 
         # Iterate
         if inliers.sum() > 2:
+            min_samples = min(3, input[input_ix[inliers], :].shape[1])
+            print('  RANSAC: min_samples={0}'.format(min_samples))
             m_i, in_i = ransac((input[input_ix[inliers], :], 
                                 output[output_ix[inliers], :]),
-                                   transform, min_samples=3,
+                                   transform, min_samples=min_samples,
                                    residual_threshold=3, max_trials=100)
             if in_i.sum() > 2:
                 model = m_i
@@ -1064,6 +1072,11 @@ def align_drizzled_image(root='',
                 titer += 1
         
         #print(output.shape, output_ix.shape, output_ix.min(), output_ix.max(), titer, toler, input_ix.shape, input.shape)
+        
+        try:
+            input_ix
+        except NameError:
+            input_ix = []
 
         titer = 0
         while (len(input_ix)*1./len(input) < 0.1) & (titer < 3):
@@ -1078,7 +1091,8 @@ def align_drizzled_image(root='',
                                   triangle_ba_max=triangle_ba_max,
                                   assume_close=assume_close,
                                   transform=transform)
-            except:
+            except Exception as e:
+                print('match list failed:', e)
                 pass
 
             output_ix, input_ix, outliers, tf = res
@@ -4444,7 +4458,12 @@ def process_direct_grism_visit(direct={},
         if isJWST:
             if nircam_wisp_kwargs is not None:
                 for _file in direct['files']:
-                    nircam_wisp_correction(_file, **nircam_wisp_kwargs)
+                    try:
+                        nircam_wisp_correction(_file, **nircam_wisp_kwargs)
+                    except Exception as e:
+                        logstr = '# !! NIRCam WISP correction failed: {0}'.format(e)
+                        utils.log_comment(utils.LOGFILE, logstr, verbose=True)
+                        pass
                 
             # if oneoverf_kwargs is not None:
             #     oneoverf_column_correction(direct, **oneoverf_kwargs)
@@ -4506,7 +4525,8 @@ def process_direct_grism_visit(direct={},
                                      extra_wfc3ir_badpix=True,
                                      verbose=False,
                                      scale_photom=False,
-                                     calc_wcsmap=False)
+                                     calc_wcsmap=False,
+                                     clean_negative=True,)
                        
         _sci, _wht, _hdr, _files, _info = _
         _drcfile = glob.glob(f"{direct['product']}_dr*sci.fits")[0]
@@ -6652,6 +6672,7 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
 
                     out_fp.append(footprints[j])
 
+            files = list(np.unique(files)) # Remove duplicates
             print(group['product'], len(files), len(group['files']))
             group['files'] = files
             group['footprints'] = out_fp
@@ -6755,6 +6776,8 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
 
         print('\n\n### drizzle_overlaps: {0} ({1})\n'.format(group['product'],
                                                      len(group['files'])))
+        print('### Final drizzle bits: {0}\n'.format(bits))
+        print('### Final drizzle CR: {0}, CR SNR:{1}, CR scale: {2}\n'.format(run_driz_cr, driz_cr_snr, driz_cr_scale))
         
         if isJWST:
             # Make sure HST-like keywords are set for JWST
@@ -6783,6 +6806,7 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
         
         if 'gain' in kwargs:
             gain = kwargs['gain']
+            print('### Gain: {0}'.format(gain))
         elif isJWST:
             gain = '1.0'
         else:
@@ -6790,35 +6814,57 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
             
         if 'rdnoise' in kwargs:
             rdnoise = kwargs['rdnoise']
+            print('### Read noise: {0}'.format(rdnoise))
         elif isJWST:
             rdnoise = '0.0'
         else:
             rdnoise = None
-            
+
+        if 'combine_type' in kwargs:
+            combine_type = kwargs['combine_type']
+            print('### Combine type: {0}'.format(combine_type))
+        else:
+            combine_type = 'median'
+        
+        if 'crbit' in kwargs:
+            crbit = kwargs['crbit']
+            print('### CR bit: {0}'.format(crbit))
+        else:
+            crbit = 4096+2048
+
+        align_north = True
+        if 'align_north' in kwargs:
+            align_north = kwargs['align_north']
+            final_rot = None
+            print('### Whether to Align North: {0}\n'.format(align_north))
+
+        input_files = list(np.unique(group['files'])) # remove duplicates  
+        print(f'{len(input_files)} files for final drizzle')
         # Fetch files from aws
-        if 'reference' in group:
-            AstroDrizzle(group['files'], output=group['product'],
+        if ('reference' in group) & (align_north):
+            AstroDrizzle(input_files, output=group['product'],
                      clean=True, context=context, preserve=False,
                      skysub=skysub, skyuser=skyuser, skymethod=skymethod,
                      driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,
                      median=run_driz_cr, blot=run_driz_cr,
                      driz_cr=run_driz_cr,
                      driz_cr_snr=driz_cr_snr, driz_cr_scale=driz_cr_scale,
-                     driz_cr_corr=False, driz_combine=True,
+                     driz_cr_corr=False, driz_combine=True, driz_sep_pixfrac=pixfrac,
                      final_bits=bits, coeffs=True, build=build,
                      final_wht_type=final_wht_type,
                      final_wt_scl=final_wt_scl,
                      final_pixfrac=pixfrac,
                      final_wcs=True, final_refimage=group['reference'],
                      final_kernel=final_kernel,
-                     resetbits=resetbits,
+                     crbit=crbit, combine_type = combine_type,
                      static=(static & (len(inst_keys) == 1)), 
                      gain=gain, rdnoise=rdnoise)
         else:
-            AstroDrizzle(group['files'], output=group['product'],
+            print('### Run final drizzle without reference, final_rot={0}'.format(final_rot))
+            AstroDrizzle(input_files, output=group['product'],
                      clean=True, context=context, preserve=False,
                      skysub=skysub, skyuser=skyuser, skymethod=skymethod,
-                     driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,
+                     driz_separate=run_driz_cr, driz_sep_wcs=run_driz_cr,driz_sep_pixfrac=pixfrac,driz_sep_bits=bits,
                      median=run_driz_cr, blot=run_driz_cr,
                      driz_cr=run_driz_cr,
                      driz_cr_snr=driz_cr_snr, driz_cr_scale=driz_cr_scale,
@@ -6832,7 +6878,8 @@ def drizzle_overlaps(exposure_groups, parse_visits=False, check_overlaps=True, m
                      final_ra=final_ra, final_dec=final_dec,
                      final_outnx=final_outnx, final_outny=final_outny,
                      final_kernel=final_kernel,
-                     resetbits=resetbits,
+                     resetbits=resetbits,crbit=crbit,
+                     combine_type = combine_type,
                      static=(static & (len(inst_keys) == 1)),
                      gain=gain, rdnoise=rdnoise)
         

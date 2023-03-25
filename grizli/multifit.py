@@ -764,7 +764,7 @@ class GroupFLT():
 
         for id, mag in zip(ids, mags):
             self.refine(id, mag=mag, poly_order=poly_order,
-                        max_coeff=max_coeff, size=30, ds9=ds9,
+                        max_coeff=max_coeff, size=100, ds9=ds9,
                         verbose=verbose, fcontam=fcontam,
                         templates=poly_templates)
 

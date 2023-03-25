@@ -18,7 +18,7 @@ import astropy.wcs as pywcs
 from .. import prep, utils
 from .default_params import UV_N_FILTERS, UV_M_FILTERS, UV_W_FILTERS
 from .default_params import OPT_N_FILTERS, OPT_M_FILTERS, OPT_W_FILTERS
-from .default_params import IR_N_FILTERS, IR_M_FILTERS, IR_W_FILTERS
+from .default_params import IR_N_FILTERS, IR_M_FILTERS, IR_W_FILTERS,NIRCAM_LW_FILTERS,NIRCAM_SW_FILTERS
 from .default_params import ALL_IMAGING_FILTERS, VALID_FILTERS
 from .default_params import UV_GRISMS, OPT_GRISMS, IR_GRISMS, GRIS_REF_FILTERS
 
@@ -1422,7 +1422,7 @@ def load_visit_info(root='j033216m2743', path='./', verbose=True):
     return visits, groups, info
 
 
-def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, combine_same_pa=True, combine_minexp=2, is_dash=False, filters=VALID_FILTERS, max_dt=1e9, visit_split_shift=1.5, file_query='*'):
+def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, combine_same_pa=True, combine_minexp=2, is_dash=False, filters=VALID_FILTERS, max_dt=1e9, visit_split_shift=1.5, file_query='*',jwst_detector=True):
 
     """
     Organize exposures into "visits" by filter / position / PA / epoch
@@ -1519,7 +1519,7 @@ def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, com
     #         hdu.flush()
     #         hdu.close()
             
-    info = utils.get_flt_info(files)
+    info = utils.get_flt_info(files,jwst_detector=jwst_detector)
 
     # Only F814W on ACS
     if ONLY_F814W:
@@ -2296,7 +2296,7 @@ mag_lim=17, cat=None, cols=['mag_auto', 'ra', 'dec'], minR=8, dy=5, selection=No
             im.flush()
 
 
-def multiband_catalog(field_root='j142724+334246', threshold=1.8, detection_background=True, photometry_background=True, get_all_filters=False, filters=None, det_err_scale=-np.inf, phot_err_scale=-np.inf, rescale_weight=True, run_detection=True, detection_filter='ir', detection_root=None, output_root=None, use_psf_filter=True, detection_params=prep.SEP_DETECT_PARAMS,  phot_apertures=prep.SEXTRACTOR_PHOT_APERTURES_ARCSEC, master_catalog=None, bkg_mask=None, bkg_params={'bw': 64, 'bh': 64, 'fw': 3, 'fh': 3, 'pixel_scale': 0.06}, use_bkg_err=False, aper_segmask=True, sci_image=None):
+def multiband_catalog(field_root='j142724+334246', threshold=1.8, detection_background=True, photometry_background=True, get_all_filters=False, filters=None, det_err_scale=-np.inf, phot_err_scale=-np.inf, rescale_weight=True, run_detection=True, detection_filter='ir', detection_root=None, output_root=None, use_psf_filter=True, detection_params=prep.SEP_DETECT_PARAMS,  phot_apertures=prep.SEXTRACTOR_PHOT_APERTURES_ARCSEC, master_catalog=None, bkg_mask=None, bkg_params={'bw': 64, 'bh': 64, 'fw': 3, 'fh': 3, 'pixel_scale': 0.06}, use_bkg_err=False, aper_segmask=True, sci_image=None,autoparams=[2.5, 10, 2.4, 3.8]):
     """
     Make a detection catalog and run aperture photometry on all available
     filter images with the SourceExtractor clone `~sep`.
@@ -2467,7 +2467,8 @@ def multiband_catalog(field_root='j142724+334246', threshold=1.8, detection_back
                                     bkg_mask=bkg_mask,
                                     bkg_params=bkg_params,
                                     use_bkg_err=use_bkg_err,
-                                    aper_segmask=aper_segmask)
+                                    aper_segmask=aper_segmask,
+                                    autoparams=autoparams)
         
         cat_pixel_scale = tab.meta['asec_0'][0]/tab.meta['aper_0'][0]
         
@@ -2584,7 +2585,8 @@ def multiband_catalog(field_root='j142724+334246', threshold=1.8, detection_back
                                     bkg_mask=bkg_mask,
                                     bkg_params=bkg_params,
                                     use_bkg_err=use_bkg_err,
-                                    sci=sci_image)
+                                    sci=sci_image,
+                                    autoparams=autoparams,)
 
             for k in filter_tab.meta:
                 
@@ -2860,7 +2862,7 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
     
     # NIRCam
     for ig, gr in enumerate(['GRISMR','GRISMC']):
-        for filt in ['F277W', 'F356W', 'F410M', 'F444W']:
+        for filt in ['F277W','F322W2', 'F356W', 'F410M', 'F444W']:
             #key = f'{gr.lower()}-{filt.lower()}'
             key = filt.lower() + '-clear'
             if key in masks:
@@ -2927,7 +2929,9 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
                 ref_file = _fstr.format(field_root, ref.lower())
             else:
                 _fstr = '{0}-{1}_dr*_sci.fits*'
-                ref_file = _fstr.format(field_root, ref.lower())                
+                ref_file = _fstr.format(field_root, ref.lower())
+                print(ref)
+                print(ref_file)              
                 ref_file = glob.glob(ref_file)[0]
         else:
             ref_file = force_ref
@@ -3314,12 +3318,12 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
 
     # Use "binning" templates for standardized extraction
     if oned_R:
-        bin_steps, step_templ = utils.step_templates(wlim=[5000, 18000.0],
+        bin_steps, step_templ = utils.step_templates(wlim=[5000, 5e4],
                                                      R=oned_R, round=10)
         init_templates = step_templ
     else:
         # Polynomial templates
-        wave = np.linspace(2000, 2.5e4, 100)
+        wave = np.linspace(2000, 5e4, 200)
         poly_templ = utils.polynomial_templates(wave, order=poly_order)
         init_templates = poly_templ
 
@@ -3376,7 +3380,7 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
             if (np.max((b.model/b.grism['ERR'])[b.fit_mask.reshape(b.sh)]) > sn_lim) | (sn_lim > 100):
                 print(' Fit trace shift: \n')
                 try:
-                    shift = mb.fit_trace_shift(tol=1.e-3, verbose=True, split_groups=True, lm=True)
+                    shift = mb.fit_trace_shift(tol=1.e-3, verbose=True, split_groups=True, lm=False)
                 except:
                     pass
 
@@ -3401,7 +3405,7 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
         except:
             continue
 
-        hdu, fig = mb.drizzle_grisms_and_PAs(fcontam=0.5, flambda=False, kernel='point', size=32, tfit=tfit, diff=diff)
+        hdu, fig = mb.drizzle_grisms_and_PAs(fcontam=0.5, flambda=False, kernel='point', size=size, tfit=tfit, diff=diff)
         fig.savefig('{0}_{1:05d}.stack.png'.format(target, id))
 
         hdu.writeto('{0}_{1:05d}.stack.fits'.format(target, id),
@@ -4202,7 +4206,7 @@ def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F
                               bits=bits, final_wcs=True, final_rot=0,
                               final_outnx=None, final_outny=None,
                               final_ra=None, final_dec=None,
-                              final_wht_type='IVM', final_wt_scl='exptime',
+                              final_wt_scl='exptime',
                               check_overlaps=False, context=context,
                               static=(static & (len(inst_keys) == 1)),
                               include_saturated=include_saturated,
@@ -4220,7 +4224,7 @@ def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F
                               skymethod=skymethod, bits=bits, final_wcs=True,
                               final_rot=0, final_outnx=None, final_outny=None,
                               final_ra=None, final_dec=None,
-                              final_wht_type='IVM', final_wt_scl='exptime',
+                              final_wt_scl='exptime',
                               check_overlaps=False, context=context,
                               static=static,
                               include_saturated=include_saturated,
@@ -4271,6 +4275,7 @@ def make_filter_combinations(root, weight_fnu=2, filter_combinations=FILTER_COMB
 
     sci_files = glob.glob('{0}-[cf]*sci.fits*'.format(root))
     sci_files.sort()
+    print('sci_files: {0}'.format(sci_files))
     
     for _isci, sci_file in enumerate(sci_files):
         #filt_i = sci_file.split('_dr')[0].split('-')[-1]
@@ -4320,10 +4325,16 @@ def make_filter_combinations(root, weight_fnu=2, filter_combinations=FILTER_COMB
             head[band] = im_i[0].header.copy()
         else:
             for k in im_i[0].header:
-                head[band][k] = im_i[0].header[k]
+                try:
+                    head[band][k] = im_i[0].header[k]
+                except Exception as e:
+                    pass
                 
             for k in ref_h_i:
-                head[band][k] = ref_h_i[k]
+                try:
+                    head[band][k] = ref_h_i[k]
+                except Exception as e:
+                    pass
         
         scl = photflam/ref_photflam
         if weight_fnu:

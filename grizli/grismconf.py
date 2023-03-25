@@ -603,7 +603,7 @@ def get_config_filename(instrume='WFC3', filter='F140W',
         #             f'CONF/GRISM_NIRCAM/V2/NIRCAM_{fi}_mod{module}_{gr}.conf')
 
         conf_file = os.path.join(GRIZLI_PATH,
-                    f'CONF/GRISM_NIRCAM/V4/NIRCAM_{fi}_mod{module}_{gr}.conf')
+                    f'CONF/GRISM_NIRCAM/V5/NIRCAM_{fi}_mod{module}_{gr}.conf')
         
     elif instrume == 'NIRCAMA':
         fi = grism
@@ -935,7 +935,18 @@ class TransformGrismconf(object):
         rev = self.transform.forward(x0[0]+tdx, x0[1]+tdy)
         trace_dy = rev[1,:] - y
         #trace_dy = y - rev[1,:]
-        
+        if 'NIRCAM' in  self.conf_file:
+            pupil = self.conf_file.split('.')[0][-1]
+            filt = self.conf_file.split('NIRCAM_')[1].split('_mod')[0]
+            mod = self.conf_file.split('_mod')[1][0]
+            
+            # Trace offsets for NIRCam, tested in ASPIRE fields
+            if filt == 'F356W':
+                if (mod == 'A') & (pupil == 'R'):
+                    trace_dy += -1.5
+                elif (mod == 'B') & (pupil == 'R'):
+                    trace_dy += -0.5
+
         # Trace offsets for NIRCam
         if 'V4/NIRCAM_F444W_modB_R.conf' in self.conf_file:
             trace_dy += -0.5
@@ -1069,6 +1080,12 @@ def load_grism_config(conf_file, warnings=True):
         conf = TransformGrismconf(conf_file)
         conf.get_beams()
     elif 'V4/NIRCAM' in conf_file:
+        conf = TransformGrismconf(conf_file)
+        conf.get_beams()
+    elif 'V5/NIRCAM' in conf_file:
+        conf = TransformGrismconf(conf_file)
+        conf.get_beams()
+    elif 'V6/NIRCAM' in conf_file:
         conf = TransformGrismconf(conf_file)
         conf.get_beams()
     else:
