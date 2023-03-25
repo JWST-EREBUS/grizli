@@ -222,7 +222,7 @@ def make_field_tiles(field='cos', ra=150.125, dec=2.2, rsize=45, tile_npix=2048+
     
     return tiles
     
-def split_tiles(root='abell2744-080-08.08', ref_tile=(8,8), filters=['visr','f125w','h'], optical=False, suffix='.rgb', xsize=32, zoom_levels=[4,3,2,1], force=False, scl=1, invert=False, verbose=True, rgb_scl=[1,1,1], rgb_min=-0.01, make_combinations=True):
+def split_tiles(root='abell2744-080-08.08', ref_tile=(8,8), filters=['visr','f125w','h'], optical=False, suffix='.rgb', xsize=32, zoom_levels=[4,3,2,1], force=False, scl=1, invert=False, verbose=True, rgb_scl=[1,1,1], rgb_min=-0.01, make_combinations=True, norm_kwargs=None, pl=2, pf=1):
     """
     Split image into 256 pixel tiles for map display
     """
@@ -245,7 +245,11 @@ def split_tiles(root='abell2744-080-08.08', ref_tile=(8,8), filters=['visr','f12
                                   gzext='*', suffix=suffix, 
                                   output_format='png',
                                   scl=scl, invert=invert, 
-                                  rgb_scl=rgb_scl, rgb_min=rgb_min)
+                                  rgb_scl=rgb_scl,
+                                  rgb_min=rgb_min,
+                                  pl=pl,
+                                  pf=pf,
+                                  norm_kwargs=norm_kwargs)
     except IndexError:
         return False
     
@@ -258,7 +262,8 @@ def split_tiles(root='abell2744-080-08.08', ref_tile=(8,8), filters=['visr','f12
     for iz, zoom in enumerate(zoom_levels):
         if iz > 0:
             zoom_img = f'{root}{suffix}.{2**iz:d}.png'
-            fig.savefig(zoom_img, dpi=dpi/2**iz)
+            # fig.savefig(zoom_img, dpi=dpi/2**iz)
+            os.system(f'convert {root}{suffix}.png -scale {1/2**iz*100:.2f}% {root}{suffix}.{2**iz:d}.png')
             img = plt.imread(zoom_img)
         else:
             img = plt.imread(f'{root}{suffix}.png')
@@ -266,7 +271,10 @@ def split_tiles(root='abell2744-080-08.08', ref_tile=(8,8), filters=['visr','f12
         if verbose:
             print(f'zoom: {zoom} {img.shape}')
         
-        img = img[::-1,:,:]
+        if img.ndim == 3:
+            img = img[::-1,:,:]
+        else:
+            img = img[::-1,:]
         
         ntile = int(2048/2**(4-zoom)/256)
         left = (tx - ref_tile[0])*ntile
@@ -295,7 +303,11 @@ def split_tiles(root='abell2744-080-08.08', ref_tile=(8,8), filters=['visr','f12
                     if not os.path.exists(dpath):
                         os.mkdir(dpath)
                                      
-                imsave(tile_file, img[sly, slx, :][::-1,:,:],
+                if img.ndim == 3:
+                    imsave(tile_file, img[sly, slx, :][::-1,:,:],
+                       plugin='pil', format_str='png')
+                else:
+                    imsave(tile_file, img[sly, slx][::-1,:],
                        plugin='pil', format_str='png')
 
 
@@ -309,9 +321,13 @@ def make_all_tile_images(root, force=False, ref_tile=(8,8), cleanup=True, zoom_l
     
     #root = f'{field}-080-08.08'
 
-    files = glob.glob(f'{root}-[hvu]*')
+    files = glob.glob(f'{root}-[hvuj]*')
     files += glob.glob(f'{root}*.rgb.png')
-
+    
+    all_files = glob.glob(f'{root}-f*_sci.fits*')
+    all_files += glob.glob(f'{root}-clea*_sci.fits*')
+    all_filters = [f.split(f'{root}-')[1].split('_dr')[0] for f in all_files]
+    
     if len(files) == 0:
         auto_script.make_filter_combinations(root, 
                           filter_combinations={'h':['F140W','F160W'], 
@@ -329,62 +345,103 @@ def make_all_tile_images(root, force=False, ref_tile=(8,8), cleanup=True, zoom_l
                                             weight_fnu=False)
 
     if 'j' in rgb_filts:
-        rgb_scl = [1.1, 0.8, 1]
+        rgb_scl = [1.1, 0.8, 8]
     else:
-        rgb_scl = [1,1,1]
+        rgb_scl = [1,1,8.]
         
     if make_combinations:
         split_tiles(root, ref_tile=ref_tile, 
                 filters=rgb_filts, zoom_levels=zoom_levels,
                 optical=False, suffix='.rgb', xsize=32, scl=1,
-                force=force, rgb_scl=rgb_scl)
+                force=force,
+                rgb_scl=rgb_scl,
+                pl=1., pf=1)
 
         plt.close('all')
     
     if (len(glob.glob(f'{root}*.brgb.png')) == 0) & make_combinations:
         split_tiles(root, ref_tile=ref_tile, 
                     filters=brgb_filts, zoom_levels=zoom_levels,
-                    optical=blue_is_opt, suffix='.brgb', xsize=32, scl=2,
-                    force=force, rgb_scl=[1., 1.2, 1.4], rgb_min=-0.018)
+                    optical=blue_is_opt, suffix='.brgb', xsize=32, scl=8,
+                    force=force, rgb_scl=[1., 1.2, 1.4],
+                    rgb_min=-0.018,
+                    pl=2, pf=1)
 
         plt.close('all')
     
     # JWST SW
     if (len(glob.glob(f'{root}*.swrgb.png')) == 0) & make_combinations:
+        filters = []
+        for f in ['f090w-clear','f115w-clear','f150w-clear','f200w-clear',
+                  'f182m-clear','f210m-clear']:
+            if f in all_filters:
+                filters.append(f)
+
         split_tiles(root, ref_tile=ref_tile, 
-                    filters=[f.lower() for f in ['F070W-CLEAR','F090W-CLEAR',
-                          'F115W-CLEAR','F150W-CLEAR',
-                          'F200W-CLEAR','F182M-CLEAR','F210M-CLEAR']],
+                    filters=filters,
                     zoom_levels=zoom_levels,
-                    optical=True, suffix='.swrgb', xsize=32, scl=4,
-                    force=force, rgb_scl=[1,1,1], rgb_min=-0.018)
+                    optical=True, suffix='.swrgb', xsize=32, scl=2,
+                    force=force, rgb_scl=[1,1.01,1.01], rgb_min=-0.018,
+                    pl=1, pf=1,
+                    # norm_kwargs={'stretch': 'asinh', 'min_cut': -0.01,
+                    #              'max_cut': 1.0, 'clip':True,
+                    #              'asinh_a':0.03},
+                    )
 
         plt.close('all')
     
     # JWST LW
     if (len(glob.glob(f'{root}*.lwrgb.png')) == 0) & make_combinations:
+        filters = []
+        for f in ['f277w-clear','f356w-clear','f444w-clear',
+                  'f410m-clear','f365m-clear','f460m-clear',
+                  'f480m-clear']:
+            if f in all_filters:
+                filters.append(f)
+                
         split_tiles(root, ref_tile=ref_tile, 
-                    filters=[f.lower() for f in ['F277W-CLEAR','F356W-CLEAR',
-                          'F360M-CLEAR','F410M-CLEAR','F444W-CLEAR',
-                          'F480M-CLEAR']],
+                    filters=filters,
                     zoom_levels=zoom_levels,
                     optical=True, suffix='.lwrgb', xsize=32, scl=4,
-                    force=force, rgb_scl=[1,1,1], rgb_min=-0.018)
+                    force=force, rgb_scl=[1.4,1.2,1.01],
+                    # norm_kwargs={'stretch': 'asinh', 'min_cut': -0.01,
+                    #              'max_cut': 1.0, 'clip':True,
+                    #              'asinh_a':0.03},
+                    pl=2, pf=1,
+                    rgb_min=-0.018)
 
         plt.close('all')
     
     # All NIRCam
     if (len(glob.glob(f'{root}*.ncrgb.png')) == 0) & make_combinations:
+        filters = ['f444w-clear','f277w-clear']
+        for f in ['f090w-clear','f115w-clear','f150w-clear']:
+            if f in all_filters:
+                filters.append(f)
+                break
+            
         split_tiles(root, ref_tile=ref_tile, 
-                    filters=[f.lower() for f in ['F070W-CLEAR','F090W-CLEAR',
-                                                 'F115W-CLEAR','F150W-CLEAR',
-                                                 'F200W-CLEAR',
-                                                 'F182M-CLEAR','F210M-CLEAR',
-                                                 'F277W-CLEAR','F356W-CLEAR',
-                                                'F410M-CLEAR','F444W-CLEAR']],
+                    filters=filters,
                     zoom_levels=zoom_levels,
                     optical=True, suffix='.ncrgb', xsize=32, scl=4,
-                    force=force, rgb_scl=[1,1,1], rgb_min=-0.018)
+                    force=force, rgb_min=-0.018,
+                    rgb_scl=[1.5, 0.8, 1],
+                    norm_kwargs={'stretch': 'asinh', 'min_cut': -0.01, 
+                                 'max_cut': 1.0, 'clip':True, 
+                                 'asinh_a':0.03},
+                    pl=1.5, pf=1)
+                    
+
+        # split_tiles(root, ref_tile=ref_tile,
+        #             filters=[f.lower() for f in ['F070W-CLEAR','F090W-CLEAR',
+        #                                          'F115W-CLEAR','F150W-CLEAR',
+        #                                          'F200W-CLEAR',
+        #                                          'F182M-CLEAR','F210M-CLEAR',
+        #                                          'F277W-CLEAR','F356W-CLEAR',
+        #                                         'F410M-CLEAR','F444W-CLEAR']],
+        #             zoom_levels=zoom_levels,
+        #             optical=True, suffix='.ncrgb', xsize=32, scl=4,
+        #             force=force, rgb_scl=[1,1,1], rgb_min=-0.018)
 
         plt.close('all')
     
