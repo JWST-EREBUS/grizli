@@ -913,8 +913,12 @@ class TransformGrismconf(object):
                     trace_dy += -1.5 # for files preprocessed with grizli
 
             if filt == 'F444W':
-                if (mod == 'A') & (pupil == 'R'):
-                    trace_dy += -2.5
+                # if (mod == 'A') & (pupil == 'R'):
+                #     trace_dy += -2.5
+                if (mod == 'A') & (pupil == 'R'): # applied to FRESCO-GDS grism-R
+                    trace_dy += -1
+                elif (mod == 'B') & (pupil == 'R'): # applied to FRESCO-GDS grism-R
+                    trace_dy += -0.5
                 if (mod == 'A') & (pupil == 'C'):
                     trace_dy += -0.1
         #----------------------------
