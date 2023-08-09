@@ -1838,7 +1838,7 @@ class MultiBeam(GroupFitter):
 
         weightf = np.exp(-(self.fcontam*np.abs(self.contamf)*self.sivarf))
         weightf[~np.isfinite(weightf)] = 0
-        # zihao add condition self.sivarf > 0 to avoid error in fitting: Except: covar!
+        # Add condition self.sivarf > 0 to avoid error in fitting: Except: covar!
         self.fit_mask &= self.sivarf > 0
         self.weightf = weightf
         self.fit_mask &= self.weightf > 0
