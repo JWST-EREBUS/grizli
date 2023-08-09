@@ -940,11 +940,18 @@ class TransformGrismconf(object):
             filt = self.conf_file.split('NIRCAM_')[1].split('_mod')[0]
             mod = self.conf_file.split('_mod')[1][0]
             
-            # Trace offsets for NIRCam, tested in ASPIRE fields
+            # Trace offsets for NIRCam V5 tracing, tested in ASPIRE fields
             if filt == 'F356W':
                 if (mod == 'A') & (pupil == 'R'):
                     trace_dy += -1.5
                 elif (mod == 'B') & (pupil == 'R'):
+                    trace_dy += -0.5
+
+            # Trace offsets for NIRCam V5 tracing, tested in FRESCO fields
+            if filt == 'F444W':
+                if (mod == 'A') & (pupil == 'R'):
+                    trace_dy += -1 
+                if (mod == 'B') & (pupil == 'R'):
                     trace_dy += -0.5
 
         # Trace offsets for NIRCam
