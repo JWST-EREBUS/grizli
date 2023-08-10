@@ -3096,9 +3096,9 @@ class GrismFLT(object):
                     if (size < 4):
                         return True
 
-            #---zihao modified---
-            dy,_ = self.conf.get_beam_trace(x=x-self.pad,y=y-self.pad,dx=0,beam='A')
-            dy = int(np.round(dy))
+            # #---zihao modified---
+            # dy,_ = self.conf.get_beam_trace(x=x-self.pad[0],y=y-self.pad[1],dx=0,beam='A')
+            # dy = int(np.round(dy))
 
             if xcat is not None:
                 xc, yc = int(np.round(xcat))+1, int(np.round(ycat))+1
