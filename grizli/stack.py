@@ -2,7 +2,6 @@
 Utilities for fitting stacked (drizzled) spectra
 """
 from collections import OrderedDict
-from imp import reload
 
 import astropy.io.fits as pyfits
 import astropy.units as u
@@ -523,7 +522,7 @@ class StackFitter(GroupFitter):
             scale_fit = scipy.optimize.minimize(self.objective_scale, init, args=(Ax, dataf*sivarf, self.wavef, fit_mask, sivarf, Nphot, self.N, 0), method=method, jac=None, hess=None, hessp=None, bounds=(), constraints=(), tol=tol, callback=None, options=None)
 
             if order == 0:
-                scale_fit.x = np.array([np.float(scale_fit.x)])
+                scale_fit.x = np.array([float(scale_fit.x)])
 
         coeffs, full, resid, chi2, AxT = self.objective_scale(scale_fit.x, Ax, dataf*sivarf, self.wavef, fit_mask, sivarf, Nphot, self.N, True)
 
@@ -1219,9 +1218,13 @@ class StackedSpectrum(object):
 
         # Configuration file
         self.is_flambda = self.header['ISFLAM']
+        # zihao add conf for nircam
         self.conf_file = self.header['CONF']
         try:
-            self.conf = grismconf.aXeConf(self.conf_file)
+            if "NIRCAM" in self.conf_file:
+                self.conf = grismconf.TransformGrismconf(self.conf_file)
+            else:
+                self.conf = grismconf.aXeConf(self.conf_file)
         except:
             # Try global path
             base = os.path.basename(self.conf_file)
@@ -1324,7 +1327,8 @@ class StackedSpectrum(object):
         w = (np.arange(h['NAXIS1'])+1-h['CRPIX1'])*h['CD1_1'] + h['CRVAL1']
 
         # Now header keywords scaled to microns
-        if w.max() < 3:
+        # zihao modified 
+        if w.max() < 5.5:
             w *= 1.e4
 
         return w

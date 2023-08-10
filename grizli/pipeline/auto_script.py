@@ -17,7 +17,8 @@ import astropy.wcs as pywcs
 from .. import prep, utils
 from .default_params import UV_N_FILTERS, UV_M_FILTERS, UV_W_FILTERS
 from .default_params import OPT_N_FILTERS, OPT_M_FILTERS, OPT_W_FILTERS
-from .default_params import IR_N_FILTERS, IR_M_FILTERS, IR_W_FILTERS
+# zihao add NIRCAM_LW_FILTERS
+from .default_params import IR_N_FILTERS, IR_M_FILTERS, IR_W_FILTERS,NIRCAM_LW_FILTERS,NIRCAM_SW_FILTERS
 from .default_params import ALL_IMAGING_FILTERS, VALID_FILTERS
 from .default_params import UV_GRISMS, OPT_GRISMS, IR_GRISMS, GRIS_REF_FILTERS
 
@@ -251,6 +252,7 @@ def create_path_dict(root='j142724+334246', home='$PWD', raw=None, prep=None, ex
 def go(root='j010311+131615', 
        HOME_PATH='$PWD',
        RAW_PATH=None, PREP_PATH=None, PERSIST_PATH=None, EXTRACT_PATH=None,
+       CRDS_CONTEXT=None,
        filters=args['filters'],
        fetch_files_args=args['fetch_files_args'],
        inspect_ramps=False,
@@ -375,7 +377,14 @@ def go(root='j010311+131615',
     utils.LOGFILE = os.path.join(PATHS['home'], f'{root}.auto_script.log.txt')
 
     utils.log_comment(utils.LOGFILE, '### Pipeline start', show_date=True)
-
+    
+    if CRDS_CONTEXT is not None:
+        utils.log_comment(utils.LOGFILE,
+                          f"# export CRDS_CONTEXT='{CRDS_CONTEXT}'",
+                          show_date=True)
+                          
+        os.environ['CRDS_CONTEXT'] = CRDS_CONTEXT
+        
     ######################
     # Download data
     os.chdir(PATHS['home'])
@@ -738,7 +747,7 @@ def go(root='j010311+131615',
         grp = multifit.GroupFLT(grism_files=grism_files, direct_files=[], 
                                 ref_file=None, seg_file=seg_file, 
                                 catalog=catalog, cpu_count=-1, sci_extn=1, 
-                                pad=256)
+                                pad=(64,256))
 
         # Make drizzle model images
         grp.drizzle_grism_models(root=root, kernel='point', scale=0.15)
@@ -840,7 +849,7 @@ def go(root='j010311+131615',
         grp = multifit.GroupFLT(grism_files=grism_files, direct_files=[], 
                                 ref_file=None, seg_file=seg_file, 
                                 catalog=catalog, cpu_count=-1, sci_extn=1, 
-                                pad=256)
+                                pad=(64,256))
 
         # Make drizzle model images
         grp.drizzle_grism_models(root=root, kernel='point', scale=0.15)
@@ -881,7 +890,7 @@ def make_directories(root='j142724+334246', HOME_PATH='$PWD', paths={}):
     return paths
 
 
-def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_products={'WFPC2/WFC': ['C0M', 'C1M'], 'WFPC2/PC': ['C0M', 'C1M'], 'ACS/WFC': ['FLC'], 'WFC3/IR': ['RAW'], 'WFC3/UVIS': ['FLC']}, remove_bad=True, reprocess_parallel=False, reprocess_clean_darks=True, s3_sync=False, fetch_flt_calibs=['IDCTAB', 'PFLTFILE', 'NPOLFILE'], filters=VALID_FILTERS, min_bad_expflag=2, fetch_only=False, force_rate=True):
+def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_products={'WFPC2/WFC': ['C0M', 'C1M'], 'WFPC2/PC': ['C0M', 'C1M'], 'ACS/WFC': ['FLC'], 'WFC3/IR': ['RAW'], 'WFC3/UVIS': ['FLC']}, remove_bad=True, reprocess_parallel=False, reprocess_clean_darks=True, s3_sync=False, fetch_flt_calibs=['IDCTAB', 'PFLTFILE', 'NPOLFILE'], filters=VALID_FILTERS, min_bad_expflag=2, fetch_only=False, force_rate=True, get_rateints=False, s3path=None):
     """
     Fully automatic script
     """
@@ -958,9 +967,62 @@ def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_pr
     
     tab = tab[use_filters]
     
-    # JWST
+    # Files from s3
+    from_s3 = np.array([d.startswith('s3://') for d in tab['dataURL']])
+    
+    jw_files = []
+    
+    if s3path is not None:
+        # Prepend s3 path to filenames
+        
+        msg = f'Fetch {len(tab)} files from {s3path}'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        
+        os.chdir(paths['raw'])
+        for url in tab['dataURL']:
+            s3file = os.path.join(s3path, os.path.basename(url))
+            _file = os.path.basename(s3file)
+            if os.path.exists(_file):
+                msg = f'fetch_files: {s3file} {_file} (file found)'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            else:
+                msg = f'fetch_files: {s3file} {_file}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                os.system(f'aws s3 cp {s3file} {_file}')
+            
+            if os.path.exists(_file) & _file.startswith('jw'):
+                jw_files.append(_file)
+                
+        tab = tab[:0]
+        jw &= False
+    
+    elif from_s3.sum() > 0:
+        
+        msg = f'Fetch {from_s3.sum()} files from S3'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
+        
+        os.chdir(paths['raw'])
+        for s3file in tab['dataURL'][from_s3]:
+            _file = os.path.basename(s3file)
+            if os.path.exists(_file):
+                msg = f'fetch_files: {s3file} {_file} (file found)'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+            else:
+                msg = f'fetch_files: {s3file} {_file}'
+                utils.log_comment(utils.LOGFILE, msg, verbose=True)
+                os.system(f'aws s3 cp {s3file} {_file}')
+            
+            if os.path.exists(_file) & _file.startswith('jw'):
+                jw_files.append(_file)
+            
+        # jw &= ~from_s3
+        tab = tab[~from_s3]
+        jw &= ~from_s3
+
     if jw.sum() > 0:
-        print(f'Fetch {jw.sum()} JWST files!')
+        # JWST
+        msg = f'Fetch {jw.sum()} JWST files!'
+        utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
         os.chdir(paths['raw'])
             
@@ -970,21 +1032,40 @@ def fetch_files(field_root='j142724+334246', HOME_PATH='$PWD', paths={}, inst_pr
                 _file = os.path.basename(f).replace('nis_cal','nis_rate')
                 if not os.path.exists(_file):
                     os.system(f'aws s3 cp s3://grizli-v2/JwstDummy/{_file} .')
-            
+                
+                if os.path.exists(_file) & _file.startswith('jw'):
+                    jw_files.append(_file)
+                
         else:
-            ## Download from MAST API when data available xxx            
-            _resp = mastquery.utils.download_from_mast(tab[jw], 
-                                                       force_rate=force_rate)
-            # update targname
-            for _file in _resp:
-                _test = os.path.exists(_file) & (jwst_utils is not None)
-                _test &= ('_nis_rate' in _file)
-                if _test:
-                    jwst_utils.initialize_jwst_image(_file)
-                    jwst_utils.set_jwst_to_hst_keywords(_file, reset=True)
-                    
+            ## Download from MAST API when data available
+            mastquery.utils.LOGFILE = utils.LOGFILE   
+            _resp = mastquery.utils.download_from_mast(tab[jw],
+                                          force_rate=force_rate,
+                                          rate_ints=get_rateints)
+            
+            for i, _file in enumerate(_resp):
+                if os.path.exists(_file) & _file.startswith('jw'):
+                    jw_files.append(_file)
+
         tab = tab[~jw]
+    
+    # Initialize grism files
+    for _file in jw_files:
+        _test = os.path.exists(_file) & (jwst_utils is not None)
+        _jwst_grism = ('_nis_rate' in _file)
+        with pyfits.open(_file) as im:
+            if 'PUPIL' in im[0].header:
+                _jwst_grism |= 'GRISM' in im[0].header['PUPIL']
         
+        _test &= _jwst_grism
+    
+        if _test:
+            # Need initialization here for JWST grism exposures
+            jwst_utils.initialize_jwst_image(_file,
+                                             oneoverf_correction=False,
+                                             )
+            jwst_utils.set_jwst_to_hst_keywords(_file, reset=True)
+
     if len(tab) > 0:
         if MAST_QUERY:
             tab = query.get_products_table(tab, extensions=['RAW', 'C1M'])
@@ -1341,7 +1422,7 @@ def load_visit_info(root='j033216m2743', path='./', verbose=True):
     return visits, groups, info
 
 
-def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, combine_same_pa=True, combine_minexp=2, is_dash=False, filters=VALID_FILTERS, max_dt=1e9, visit_split_shift=1.5, file_query='*',jwst_detector=True):
+def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, combine_same_pa=True, combine_minexp=2, is_dash=False, filters=VALID_FILTERS, max_dt=1e9, visit_split_shift=1.5, file_query='*'):
 
     """
     Organize exposures into "visits" by filter / position / PA / epoch
@@ -1438,7 +1519,7 @@ def parse_visits(files=[], field_root='', RAW_PATH='../RAW', use_visit=True, com
     #         hdu.flush()
     #         hdu.close()
             
-    info = utils.get_flt_info(files,jwst_detector=jwst_detector)
+    info = utils.get_flt_info(files)
 
     # Only F814W on ACS
     if ONLY_F814W:
@@ -2417,6 +2498,11 @@ def multiband_catalog(field_root='j142724+334246', threshold=1.8, detection_back
             mq = '{0}-f*dr?_sci.fits*'
             mq = mq.format(field_root.replace('-100mas','-*mas'))
             mosaic_files = glob.glob(mq)
+            
+            mq = '{0}-clear*dr?_sci.fits*'
+            mq = mq.format(field_root.replace('-100mas','-*mas'))
+            mosaic_files += glob.glob(mq)
+            
             mosaic_files.sort()
             
             filters = [file.split('_')[-3][len(field_root)+1:] 
@@ -2698,7 +2784,7 @@ def photutils_catalog(field_root='j142724+334246', threshold=1.8, subtract_bkg=T
     return tab
 
 
-def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=None, force_seg=None, force_cat=None, galfit=False, pad=256, files=None, gris_ref_filters=GRIS_REF_FILTERS, split_by_grism=False):
+def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=None, force_seg=None, force_cat=None, galfit=False, pad=(64,256), files=None, gris_ref_filters=GRIS_REF_FILTERS, split_by_grism=False):
     """
     Initialize a GroupFLT object from exposures in a working directory.  The 
     script tries to match mosaic images with grism exposures based on the 
@@ -2773,8 +2859,9 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
     #                       gr, filt]
     
     # NIRCam
+    # zihao add F322W2
     for ig, gr in enumerate(['GRISMR','GRISMC']):
-        for filt in ['F277W', 'F356W', 'F410M', 'F444W']:
+        for filt in ['F277W', 'F322W2', 'F356W', 'F410M', 'F444W']:
             #key = f'{gr.lower()}-{filt.lower()}'
             key = filt.lower() + '-clear'
             if key in masks:
@@ -2841,9 +2928,8 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
                 ref_file = _fstr.format(field_root, ref.lower())
             else:
                 _fstr = '{0}-{1}_dr*_sci.fits*'
-                ref_file = _fstr.format(field_root, ref.lower())
-                print(ref)
-                print(ref_file)              
+                print(ref.lower())
+                ref_file = _fstr.format(field_root, ref.lower())    
                 ref_file = glob.glob(ref_file)[0]
         else:
             ref_file = force_ref
@@ -2851,7 +2937,16 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
         _grism_files=list(info['FILE'][masks[key][0]])
         if masks[key][1].startswith('GRISM'):
             # NIRCAM
-            polyx = [2.1, 5.1]
+            if 'F444W' in masks[key][2].upper():
+                polyx = [2.1, 5.5, 4.4]
+            elif 'F410M' in masks[key][2].upper():
+                polyx = [2.1, 5.5, 4.1]
+            elif 'F356W' in masks[key][2].upper():
+                polyx = [2.1, 5.5, 3.6]
+            elif 'F277W' in masks[key][2].upper():
+                polyx = [2.1, 5.5, 2.8]
+            else:
+                polyx = [2.1, 5.5, 3.6]
             
         elif masks[key][1].startswith('GR150'):
             # NIRISS
@@ -2870,6 +2965,7 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
         msg += f'\nauto_script.grism_prep: seg_file = {seg_file}' 
         msg += f'\nauto_script.grism_prep: catalog  = {catalog}' 
         msg += f'\nauto_script.grism_prep: polyx  = {polyx}' 
+        msg += f'\nauto_script.grism_prep: pad  = {pad}' 
         utils.log_comment(utils.LOGFILE, msg, verbose=True)
         
         grp_i = multifit.GroupFLT(grism_files=_grism_files,
@@ -2896,7 +2992,7 @@ def load_GroupFLT(field_root='j142724+334246', PREP_PATH='../Prep', force_ref=No
         return [grp]
 
 
-def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='../Extractions', ds9=None, refine_niter=3, gris_ref_filters=GRIS_REF_FILTERS, force_ref=None, files=None, split_by_grism=True, refine_poly_order=1, refine_fcontam=0.5, cpu_count=0, mask_mosaic_edges=True, prelim_mag_limit=25, refine_mag_limits=[18, 24], init_coeffs=[1.1, -0.5], grisms_to_process=None, pad=256, model_kwargs={'compute_size': True}):
+def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='../Extractions', ds9=None, refine_niter=3, gris_ref_filters=GRIS_REF_FILTERS, force_ref=None, files=None, split_by_grism=True, refine_poly_order=1, refine_fcontam=0.5, cpu_count=0, mask_mosaic_edges=True, prelim_mag_limit=25, refine_mag_limits=[18, 24], init_coeffs=[1.1, -0.5], grisms_to_process=None, pad=(64, 256), model_kwargs={'compute_size': True}, sep_background_kwargs=None, subtract_median_filter=False, median_filter_size=71, median_filter_central=10, second_pass_filtering=False, box_filter_sn=3, box_filter_width=3):
     """
     Contamination model for grism exposures
     """
@@ -2927,14 +3023,27 @@ def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='.
                                 pad=pad)
 
     for grp in grp_objects:
-
-        ################
-        # Compute preliminary model
-        grp.compute_full_model(fit_info=None, verbose=True, store=False, 
-                               mag_limit=prelim_mag_limit, coeffs=init_coeffs, 
-                               cpu_count=cpu_count,
-                               model_kwargs=model_kwargs)
-
+        
+        if subtract_median_filter:
+            
+            # Subtract a median along the dispersion direction
+            # and don't do any contamination modeling
+            refine_niter = 0
+            grp.subtract_median_filter(filter_size=median_filter_size, 
+                                       filter_central=median_filter_central,
+                                       second_pass_filtering=second_pass_filtering, 
+                                       box_filter_sn=box_filter_sn, 
+                                       box_filter_width=box_filter_width)
+            
+        else:
+            ################
+            # Compute preliminary model
+            grp.compute_full_model(fit_info=None, verbose=True, store=False, 
+                                   mag_limit=prelim_mag_limit, 
+                                   coeffs=init_coeffs, 
+                                   cpu_count=cpu_count,
+                                   model_kwargs=model_kwargs)
+        
         ##############
         # Save model to avoid having to recompute it again
         grp.save_full_data()
@@ -2963,35 +3072,41 @@ def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='.
             except:
                 utils.log_exception(utils.LOGFILE, traceback)
                 pass
-
-        ################
-        # Remove constant modal background
-        for i in range(grp.N):
-            mask = (grp.FLTs[i].model < grp.FLTs[i].grism['ERR']*0.6) 
-            mask &= (grp.FLTs[i].grism['SCI'] != 0)
-
-            # Fit Gaussian to the masked pixel distribution
-            clip = np.ones(mask.sum(), dtype=bool)
-            for iter in range(3):
-                clip_data = grp.FLTs[i].grism.data['SCI'][mask][clip]
-                n = scipy.stats.norm.fit(clip_data)
-                clip = np.abs(grp.FLTs[i].grism.data['SCI'][mask]) < 3*n[1]
+        
+        
+        # Sep background
+        if sep_background_kwargs is not None:
+            grp.subtract_sep_background(**sep_background_kwargs)
             
-            del(clip_data)
-            mode = n[0]
+        elif not subtract_median_filter:
+            ################
+            # Remove constant modal background
+            for i in range(grp.N):
+                mask = (grp.FLTs[i].model < grp.FLTs[i].grism['ERR']*0.6) 
+                mask &= (grp.FLTs[i].grism['SCI'] != 0)
 
-            logstr = '# grism_mode_bg {0} {1} {2:.4f}'
-            logstr = logstr.format(grp.FLTs[i].grism.parent_file, 
-                                   grp.FLTs[i].grism.filter, mode)
-            utils.log_comment(utils.LOGFILE, logstr, verbose=True)
+                # Fit Gaussian to the masked pixel distribution
+                clip = np.ones(mask.sum(), dtype=bool)
+                for iter in range(3):
+                    clip_data = grp.FLTs[i].grism.data['SCI'][mask][clip]
+                    n = scipy.stats.norm.fit(clip_data)
+                    clip = np.abs(grp.FLTs[i].grism.data['SCI'][mask]) < 3*n[1]
+            
+                del(clip_data)
+                mode = n[0]
 
-            try:
-                ds9.view(grp.FLTs[i].grism['SCI'] - grp.FLTs[i].model)
-            except:
-                pass
+                logstr = '# grism_mode_bg {0} {1} {2:.4f}'
+                logstr = logstr.format(grp.FLTs[i].grism.parent_file, 
+                                       grp.FLTs[i].grism.filter, mode)
+                utils.log_comment(utils.LOGFILE, logstr, verbose=True)
 
-            # Subtract
-            grp.FLTs[i].grism.data['SCI'] -= mode
+                try:
+                    ds9.view(grp.FLTs[i].grism['SCI'] - grp.FLTs[i].model)
+                except:
+                    pass
+
+                # Subtract
+                grp.FLTs[i].grism.data['SCI'] -= mode
 
         #############
         # Refine the model
@@ -3018,8 +3133,12 @@ def grism_prep(field_root='j142724+334246', PREP_PATH='../Prep', EXTRACT_PATH='.
                                 mag_limits=refine_mag_limits,
                                 max_coeff=5, ds9=ds9, verbose=True,
                                 fcontam=refine_i,
-                                wave=np.linspace(*grp.polyx, 100)*1.e4)
-
+                                wave=np.linspace(*grp.polyx[:2], 100)*1.e4)
+        
+            # Do background again
+            if sep_background_kwargs is not None:
+                grp.subtract_sep_background(**sep_background_kwargs)
+        
         ##############
         # Save model to avoid having to recompute it again
         grp.save_full_data()
@@ -3063,7 +3182,14 @@ def refine_model_with_fits(field_root='j142724+334246', grp=None, master_files=N
         except:
             seg_file = None
 
-        grp = multifit.GroupFLT(grism_files=master_files, direct_files=[], ref_file=None, seg_file=seg_file, catalog=catalog, cpu_count=-1, sci_extn=1, pad=256)
+        grp = multifit.GroupFLT(grism_files=master_files,
+                                direct_files=[],
+                                ref_file=None,
+                                seg_file=seg_file,
+                                catalog=catalog,
+                                cpu_count=-1,
+                                sci_extn=1,
+                                pad=(64,256))
 
     fit_files = glob.glob('*full.fits')
     fit_files.sort()
@@ -3138,7 +3264,15 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
         except:
             seg_file = None
 
-        grp = multifit.GroupFLT(grism_files=master_files, direct_files=[], ref_file=None, seg_file=seg_file, catalog=catalog, cpu_count=-1, sci_extn=1, pad=256)
+        grp = multifit.GroupFLT(grism_files=master_files,
+                                direct_files=[],
+                                ref_file=None,
+                                seg_file=seg_file,
+                                catalog=catalog,
+                                cpu_count=-1,
+                                sci_extn=1,
+                                pad=(64,256)
+                                )
     else:
         init_grp = False
 
@@ -3182,12 +3316,14 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
 
     # Use "binning" templates for standardized extraction
     if oned_R:
-        bin_steps, step_templ = utils.step_templates(wlim=[5000, 5e4],
+        # zihao extend the wavelength
+        bin_steps, step_templ = utils.step_templates(wlim=[5000, 5.5e4],
                                                      R=oned_R, round=10)
         init_templates = step_templ
     else:
         # Polynomial templates
-        wave = np.linspace(2000, 5e4, 200)
+        # zihao extend the wavelength
+        wave = np.linspace(2000, 5.5e4, 200)
         poly_templ = utils.polynomial_templates(wave, order=poly_order)
         init_templates = poly_templ
 
@@ -3232,10 +3368,8 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
                                                   fit_background=True)
 
             fit_log, keep_dict, has_bad = out
-
             if has_bad:
                 print('\n  Has bad PA!  Final list: {0}\n{1}'.format(keep_dict, fit_log))
-
         ixi = grp.catalog['NUMBER'] == id
         if (fit_trace_shift > 0) & (grp.catalog['MAG_AUTO'][ixi][0] < 24.5):
             b = mb.beams[0]
@@ -3244,7 +3378,9 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
             if (np.max((b.model/b.grism['ERR'])[b.fit_mask.reshape(b.sh)]) > sn_lim) | (sn_lim > 100):
                 print(' Fit trace shift: \n')
                 try:
-                    shift = mb.fit_trace_shift(tol=1.e-3, verbose=True, split_groups=True, lm=True)
+                    # shift = mb.fit_trace_shift(tol=1.e-3, verbose=True, split_groups=True, lm=True)
+                    # zihao modified
+                    shift = mb.fit_trace_shift(tol=1.e-3, verbose=True, split_groups=True, lm=False)
                 except:
                     pass
 
@@ -3269,7 +3405,7 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
         except:
             continue
 
-        hdu, fig = mb.drizzle_grisms_and_PAs(fcontam=0.5, flambda=False, kernel='point', size=size, tfit=tfit, diff=diff)
+        hdu, fig = mb.drizzle_grisms_and_PAs(fcontam=0.5, flambda=False, kernel='point', size=32, tfit=tfit, diff=diff)
         fig.savefig('{0}_{1:05d}.stack.png'.format(target, id))
 
         hdu.writeto('{0}_{1:05d}.stack.fits'.format(target, id),
@@ -3305,7 +3441,7 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
                 continue
 
         try:
-            out = fitting.run_all_parallel(id, get_output_data=True, **fit_args, args_file=args_file)
+            out = fitting.run_all_parallel(id, get_output_data=True,**fit_args, args_file=args_file)
             mb, st, fit, tfit, line_hdu = out
 
             spectrum_1d = [tfit['cont1d'].wave, tfit['cont1d'].flux]
@@ -3327,7 +3463,7 @@ def extract(field_root='j142724+334246', maglim=[13, 24], prior=None, MW_EBV=0.0
         return True
 
 
-def generate_fit_params(field_root='j142724+334246', fitter=['nnls', 'bounded'], prior=None, MW_EBV=0.00, pline=DITHERED_PLINE, fit_only_beams=True, run_fit=True, poly_order=7, fsps=True, min_sens=0.01, sys_err=0.03, fcontam=0.2, zr=[0.05, 3.6], dz=[0.004, 0.0004], fwhm=1000, lorentz=False, include_photometry=True, use_phot_obj=False, save_file='fit_args.npy', fit_trace_shift=False, **kwargs):
+def generate_fit_params(field_root='j142724+334246', fitter=['nnls', 'bounded'], prior=None, MW_EBV=0.00, pline=DITHERED_PLINE, fit_only_beams=True, run_fit=True, poly_order=7, fsps=True, min_sens=0.01, sys_err=0.03, fcontam=0.2, zr=[0.05, 3.6], dz=[0.004, 0.0004], fwhm=1000, lorentz=False, include_photometry=True, use_phot_obj=False, save_file='fit_args.npy', fit_trace_shift=False, full_line_list=['Lya', 'OII', 'Hb', 'OIII', 'Ha', 'Ha+NII', 'SII', 'SIII','PaB','He-1083','PaA'],  **kwargs):
     """
     Generate a parameter dictionary for passing to the fitting script
     """
@@ -3340,8 +3476,12 @@ def generate_fit_params(field_root='j142724+334246', fitter=['nnls', 'bounded'],
     t0 = utils.load_templates(fwhm=fwhm, line_complexes=True, stars=False, full_line_list=None, continuum_list=None, fsps_templates=fsps, alf_template=True, lorentz=lorentz)
     t1 = utils.load_templates(fwhm=fwhm, line_complexes=False, stars=False, full_line_list=None, continuum_list=None, fsps_templates=fsps, alf_template=True, lorentz=lorentz)
 
-    args = fitting.run_all(0, t0=t0, t1=t1, fwhm=1200, zr=zr, dz=dz, fitter=fitter, group_name=field_root, fit_stacks=False, prior=prior,  fcontam=fcontam, pline=pline, min_sens=min_sens, mask_sn_limit=np.inf, fit_beams=False,  root=field_root, fit_trace_shift=fit_trace_shift, phot=phot, use_phot_obj=use_phot_obj, verbose=True, scale_photometry=False, show_beams=True, overlap_threshold=10, get_ir_psfs=True, fit_only_beams=fit_only_beams, MW_EBV=MW_EBV, sys_err=sys_err, get_dict=True)
-
+    args = fitting.run_all(0, t0=t0, t1=t1, fwhm=1200, zr=zr, dz=dz, fitter=fitter, group_name=field_root, fit_stacks=False, prior=prior,  fcontam=fcontam, pline=pline, min_sens=min_sens, mask_sn_limit=np.inf, fit_beams=False,  root=field_root, fit_trace_shift=fit_trace_shift, phot=phot, use_phot_obj=use_phot_obj, verbose=True, scale_photometry=False, show_beams=True, overlap_threshold=10, get_ir_psfs=True, fit_only_beams=fit_only_beams, MW_EBV=MW_EBV, sys_err=sys_err, get_dict=True, full_line_list=full_line_list)
+    
+    for k in kwargs:
+        if k in args:
+            args[k] = kwargs[k]
+            
     # EAZY-py photometry object from HST photometry
     try:
         import eazy.photoz
@@ -3387,12 +3527,6 @@ def summary_catalog(**kwargs):
 def fine_alignment(field_root='j142724+334246', HOME_PATH='/Volumes/Pegasus/Grizli/Automatic/', min_overlap=0.2, stopme=False, ref_err=1.e-3, radec=None, redrizzle=True, shift_only=True, maglim=[17, 24], NITER=1, catalogs=['GAIA', 'PS1', 'NSC', 'SDSS', 'WISE'], method='Powell', radius=5., program_str=None, match_str=[], all_visits=None, date=None, gaia_by_date=False, tol=None, fit_options=None, print_options={'precision': 3, 'sign': ' '}, include_internal_matches=True, master_gaia_catalog=None):
     """
     Try fine alignment from visit-based SourceExtractor catalogs
-    
-    Parameters
-    ----------
-    
-    Returns
-    -------
     
     """
     import os
@@ -3909,7 +4043,7 @@ def make_reference_wcs(info, files=None, output='mosaic_wcs-ref.fits', filters=[
         return ref_hdu[1]
 
 
-def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F125W', 'F140W', 'F150W', 'F160W', 'F200W'], ref_image=None, ref_wcs=None, bits=None, pixfrac=0.75, scale=0.06, make_combined=False, drizzle_filters=True, skysub=False, skymethod='localmin', match_str=[], context=False, pad_reference=60, min_nexp=2, static=True, skip_products=[], include_saturated=False, multi_driz_cr=False, filter_driz_cr=False, **kwargs):
+def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F125W', 'F140W', 'F150W', 'F160W', 'F200W','F356W'], ref_image=None, ref_wcs=None, bits=None, pixfrac=0.75, scale=0.06, make_combined=False, drizzle_filters=True, skysub=False, skymethod='localmin', match_str=[], context=False, pad_reference=60, min_nexp=2, static=True, skip_products=[], include_saturated=False, multi_driz_cr=False, filter_driz_cr=False, **kwargs):
     """
     Drizzle filter groups based on precomputed image associations
     """
@@ -3979,7 +4113,6 @@ def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F
         filt = visit['product'].split('-')[-1]
         if filt == 'clear':
             filt = visit['product'].split('-')[-2]
-            
         if filt.upper() not in filters:
             msg = ('filt.upper not in filters')                   
             utils.log_comment(utils.LOGFILE, msg, show_date=True,
@@ -4009,7 +4142,6 @@ def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F
 
             if not has_match:
                 continue
-
         if filt not in filter_groups:
             filter_groups[filt] = {'product': f'{field_root}-{filt}',
                                    'files': [],
@@ -4035,7 +4167,7 @@ def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F
                     wfc3ir['footprint'] = wfc3ir['footprint'].union(fp_i)
                 else:
                     wfc3ir['footprint'] = fp_i.buffer(0)
-
+    
     if len(filter_groups) == 0:
         print('No filters found ({0})'.format(filters))
         return None
@@ -4090,14 +4222,15 @@ def drizzle_overlaps(field_root, filters=['F098M', 'F105W', 'F110W', 'F115W', 'F
                               skymethod=skymethod, bits=bits, final_wcs=True,
                               final_rot=0, final_outnx=None, final_outny=None,
                               final_ra=None, final_dec=None,
-                              final_wht_type='IVM', final_wt_scl='exptime',
+                            #   final_wht_type='IVM', 
+                              final_wt_scl='exptime',
                               check_overlaps=False, context=context,
                               static=static,
                               include_saturated=include_saturated,
                               run_driz_cr=filter_driz_cr, **kwargs)
 
 
-FILTER_COMBINATIONS = {'ir': IR_M_FILTERS+IR_W_FILTERS,
+FILTER_COMBINATIONS = {'ir': IR_M_FILTERS+IR_W_FILTERS+NIRCAM_LW_FILTERS+NIRCAM_SW_FILTERS,
                        'opt': OPT_M_FILTERS+OPT_W_FILTERS}
 
 
@@ -4190,17 +4323,16 @@ def make_filter_combinations(root, weight_fnu=2, filter_combinations=FILTER_COMB
             head[band] = im_i[0].header.copy()
         else:
             for k in im_i[0].header:
+                # zihao modified
                 try:
                     head[band][k] = im_i[0].header[k]
-                except Exception as e:
-                    # print('Cannot copy header keyword {0}: {1}. Try to append a card.'.format(k, e))
+                except:
                     pass
                 
             for k in ref_h_i:
                 try:
                     head[band][k] = ref_h_i[k]
-                except Exception as e:
-                    # print('Cannot copy header keyword {0}: {1}. Try to append a card.'.format(k, e))
+                except:
                     pass
         
         scl = photflam/ref_photflam
@@ -4289,7 +4421,6 @@ def make_combined_mosaics(root, fix_stars=False, mask_spikes=False, skip_single_
 
     mosaic_pixfrac = mosaic_args['mosaic_pixfrac']
     combine_all_filters = mosaic_args['combine_all_filters']
-
     drizzle_overlaps(root,
                      filters=mosaic_args['ir_filters'],
                      min_nexp=1,
@@ -4308,6 +4439,7 @@ def make_combined_mosaics(root, fix_stars=False, mask_spikes=False, skip_single_
     # Mask diffraction spikes
     ir_mosaics = glob.glob('{0}-f*drz_sci.fits'.format(root))
     if (len(ir_mosaics) > 0) & (mask_spikes):
+
         cat = prep.make_SEP_catalog('{0}-ir'.format(root), threshold=4,
                                     save_fits=False,
                                     column_case=str.lower)
@@ -4322,10 +4454,10 @@ def make_combined_mosaics(root, fix_stars=False, mask_spikes=False, skip_single_
             ra_center = np.median(cat['ra'])
             dec_center = np.median(cat['dec'])
             rad_arcmin = np.sqrt((cat['ra']-ra_center)**2*np.cos(cat['dec']/180*np.pi)**2+(cat['dec']-dec_center)**2)*60
-
             try:
                 gaia_tmp = prep.get_gaia_DR2_catalog(ra_center, dec_center,
                                radius=rad_arcmin.max()*1.1, use_mirror=False)
+
                 idx, dr = utils.GTable(gaia_tmp).match_to_catalog_sky(cat)
 
                 gaia_match = (dr.value < 0.5)
@@ -4402,7 +4534,7 @@ def make_combined_mosaics(root, fix_stars=False, mask_spikes=False, skip_single_
     else:
         # Make a separate optical combined image
         make_combined_label = 'opt'
-
+    
     drizzle_overlaps(root,
                      filters=mosaic_args['optical_filters'],
                      pixfrac=mosaic_pixfrac,
@@ -4838,7 +4970,7 @@ def get_rgb_filters(filter_list, force_ir=False, pure_sort=False):
 
 TICKPARAMS = dict(axis='both', colors='w', which='both')
 
-def field_rgb(root='j010514+021532', xsize=6, output_dpi=None, HOME_PATH='./', show_ir=True, pl=1, pf=1, scl=1, scale_ab=None, rgb_scl=[1, 1, 1], ds9=None, force_ir=False, filters=None, add_labels=True, output_format='jpg', rgb_min=-0.01, xyslice=None, pure_sort=False, verbose=True, force_rgb=None, suffix='.field', mask_empty=False, tick_interval=60, timestamp=False, mw_ebv=0, use_background=False, tickparams=TICKPARAMS, fill_black=False, ref_spectrum=None, gzext='', full_dimensions=False, invert=False, get_rgb_array=False, get_images=False):
+def field_rgb(root='j010514+021532', xsize=8, output_dpi=None, HOME_PATH='./', show_ir=True, pl=1, pf=1, scl=1, scale_ab=None, rgb_scl=[1, 1, 1], ds9=None, force_ir=False, filters=None, add_labels=True, output_format='jpg', rgb_min=-0.01, xyslice=None, pure_sort=False, verbose=True, force_rgb=None, suffix='.field', mask_empty=False, tick_interval=60, timestamp=False, mw_ebv=0, use_background=False, tickparams=TICKPARAMS, fill_black=False, ref_spectrum=None, gzext='', full_dimensions=False, invert=False, get_rgb_array=False, get_images=False):
     """
     RGB image of the field mosaics
     """
@@ -5094,14 +5226,14 @@ def field_rgb(root='j010514+021532', xsize=6, output_dpi=None, HOME_PATH='./', s
     if full_dimensions:
         dpi = int(nx/xsize)
         xsize = nx/dpi
-        #print('xsize: ', xsize, ny, nx, dpi)
-        
+    
     elif (output_dpi is not None):
         xsize = nx/output_dpi
-
+        dpi = output_dpi
+    
     dim = [xsize, xsize/nx*ny]
 
-    fig, ax = plt.subplots(1,1,figsize=dim)
+    fig, ax = plt.subplots(1,1,figsize=dim, dpi=dpi)
 
     ax.imshow(image, origin='lower', extent=(-nx/2, nx/2, -ny/2, ny/2))
 

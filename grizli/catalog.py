@@ -1218,6 +1218,6 @@ def get_radec_catalog(ra=0., dec=0., radius=3., product='cat', verbose=True, ref
         msg = '{0} - Reference RADEC: {1} [{2}] N={3}'
         print(msg.format(product, radec, ref_catalog, len(ref_cat)))
 
-    return radec, ref_catalog  
+    return radec, ref_catalog
 
 

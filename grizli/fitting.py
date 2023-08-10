@@ -12,6 +12,7 @@ from collections import OrderedDict
 import numpy as np
 
 import astropy.io.fits as pyfits
+import astropy.wcs as pywcs
 import astropy.units as u
 from astropy.cosmology import Planck15
 import astropy.constants as const
@@ -355,7 +356,7 @@ def run_all(id, t0=None, t1=None, fwhm=1200, zr=[0.65, 1.6], dz=[0.004, 0.0002],
     from grizli.multifit import MultiBeam
 
     #from . import __version__ as grizli__version
-    from .version import __long_version__ as grizli__version
+    from .version import __version__ as grizli__version
     from .pipeline import summary
 
     if get_dict:
@@ -386,7 +387,6 @@ def run_all(id, t0=None, t1=None, fwhm=1200, zr=[0.65, 1.6], dz=[0.004, 0.0002],
                                        fit_background=True)
 
             fit_log, keep_dict, has_bad = out
-
             if has_bad:
                 if verbose:
                     msg = '\nHas bad PA!  Final list: {0}\n{1}'
@@ -1948,7 +1948,7 @@ class GroupFitter(object):
         return A_phot[:, mask]
 
 
-    def xfit_at_z(self, z=0, templates=[], fitter='nnls', fit_background=True, get_uncertainties=False, get_design_matrix=False, pscale=None, COEFF_SCALE=1.e-19, get_components=False, huber_delta=4, get_residuals=False, include_photometry=True, use_cached_templates=False, bounded_kwargs=BOUNDED_DEFAULTS, apply_sensitivity=True):
+    def xfit_at_z(self, z=0, templates=[], fitter='nnls', fit_background=True, get_uncertainties=False, get_design_matrix=False, pscale=None, COEFF_SCALE=1.e-19, get_components=False, huber_delta=4, get_residuals=False, include_photometry=True, use_cached_templates=False, bounded_kwargs=BOUNDED_DEFAULTS, apply_sensitivity=True, median_filter_kwargs=None):
         """Fit the 2D spectra with a set of templates at a specified redshift.
 
         Parameters
@@ -2099,9 +2099,29 @@ class GroupFitter(object):
                 sl = self.mslices[j]
                 if t in beam.thumbs:
                     #print('Use thumbnail!', t)
-                    A[self.N+i, sl] = beam.compute_model(thumb=beam.thumbs[t], spectrum_1d=s, in_place=False, is_cgs=True, apply_sensitivity=apply_sensitivity)[beam.fit_mask]*COEFF_SCALE
+                    _model_i = beam.compute_model(thumb=beam.thumbs[t],
+                                                  spectrum_1d=s,
+                                                  in_place=False,
+                                                  is_cgs=True,
+                                            apply_sensitivity=apply_sensitivity)
+                                            
+                    #A[self.N+i, sl] = _model_i[beam.fit_mask]*COEFF_SCALE
                 else:
-                    A[self.N+i, sl] = beam.compute_model(spectrum_1d=s, in_place=False, is_cgs=True, apply_sensitivity=apply_sensitivity)[beam.fit_mask]*COEFF_SCALE
+                    _model_i = beam.compute_model(spectrum_1d=s, 
+                                                  in_place=False,
+                                                  is_cgs=True,
+                                            apply_sensitivity=apply_sensitivity)
+                
+                if median_filter_kwargs is not None:
+                    _model_resh = _model_i.reshape(beam.sh) 
+                    _fdata, _ft = utils.safe_nanmedian_filter(_model_resh, 
+                                             filter_kwargs=median_filter_kwargs,
+                                             axis=1, cval=0.0,
+                                             clean=True)
+                    
+                    _model_i -= _fdata.flatten()
+                    
+                A[self.N+i, sl] = _model_i[beam.fit_mask]*COEFF_SCALE
 
             # Multiply spline templates by single continuum template
             if ('spline' in t) & ('spline' in fitter):
@@ -2229,7 +2249,6 @@ class GroupFitter(object):
 
         #chi2 = np.sum(resid[full_fit_mask]**2*self.sivarf[full_fit_mask]**2)
         norm_resid = resid*(sivarf)[full_fit_mask]
-
         # Use Huber loss function rather than direct chi2
         if get_residuals:
             chi2 = norm_resid
@@ -2238,9 +2257,7 @@ class GroupFitter(object):
                 chi2 = huber(huber_delta, norm_resid)*2.
             else:
                 chi2 = norm_resid**2
-
-            chi2 = np.sum(chi2)
-
+            chi2 = np.nansum(chi2)
         # Uncertainties from covariance matrix
         if get_uncertainties:
             try:
@@ -2587,17 +2604,16 @@ class GroupFitter(object):
             fit_resid, coeffs[i, :], coeffs_err, covar[i, :, :] = out
 
             if huber_delta > 0:
-                chi2[i] = (huber(huber_delta, fit_resid)*2.).sum()
+                chi2[i] = np.nansum((huber(huber_delta, fit_resid)*2.))
             else:
-                chi2[i] = (fit_resid**2).sum()
+                chi2[i] = np.nansum((fit_resid**2))
 
             if get_student_logpdf:
-                logpdf[i] = student_t.logpdf(fit_resid, *student_t_pars).sum()
+                logpdf[i] = np.nansum(student_t.logpdf(fit_resid, *student_t_pars))
 
             if chi2[i] < chi2min:
                 iz = i
                 chi2min = chi2[i]
-
             if verbose:
                 line = '  {0:.4f} {1:9.1f} ({2:.4f}) {3:d}/{4:d}'
                 print(utils.NO_NEWLINE + 
@@ -2675,13 +2691,13 @@ class GroupFitter(object):
 
                 fit_resid, coeffs_zoom[i, :], e, covar_zoom[i, :, :] = out
                 if huber_delta > 0:
-                    chi2_zoom[i] = (huber(huber_delta, fit_resid)*2.).sum()
+                    chi2_zoom[i] = np.nansum((huber(huber_delta, fit_resid)*2.))
                 else:
-                    chi2_zoom[i] = (fit_resid**2).sum()
+                    chi2_zoom[i] = np.nansum((fit_resid**2))
 
                 if get_student_logpdf:
-                    logpdf_zoom[i] = student_t.logpdf(fit_resid,
-                                                      *student_t_pars).sum()
+                    logpdf_zoom[i] = np.nansum(student_t.logpdf(fit_resid,
+                                                      *student_t_pars))
 
                 #A, coeffs_zoom[i,:], chi2_zoom[i], model_2d = out
                 if chi2_zoom[i] < chi2min:
@@ -2747,8 +2763,12 @@ class GroupFitter(object):
         fit.meta['chimin'] = (chi2.min(), 'Minimum chi2 of template fit')
         fit.meta['chimax'] = (chi2.max(), 'Maximum chi2 of template fit')
         fit.meta['fitter'] = (fitter, 'Minimization algorithm')
-
-        fit.meta['as_epsf'] = ((self.psf_param_dict is not None)*1,
+        #zihao modified
+        try:
+            fit.meta['as_epsf'] = ((self.psf_param_dict is not None)*1,
+                                'Object fit with effective PSF morphology')
+        except:
+            fit.meta['as_epsf'] = (False,
                                'Object fit with effective PSF morphology')
 
 
@@ -2916,6 +2936,7 @@ class GroupFitter(object):
         fit.meta['gam_loss'] = (risk_gamma, 
                                 'Gamma factor of the risk/loss function')
         return fit
+
 
     def template_at_z(self, z=0, templates=None, fwhm=1400, get_uncertainties=2, draws=0, **kwargs):
         """
@@ -3749,7 +3770,7 @@ class GroupFitter(object):
         return fig, line, tfit
 
 
-    def oned_figure(self, bin=1, wave=None, show_beams=True, minor=0.1, tfit=None, show_rest=False, axc=None, figsize=[6, 4], fill=False, units='flam', min_sens_show=0.1, ylim_percentile=2, scale_on_stacked=False, show_individual_templates=False, apply_beam_mask=True, loglam_1d=True, trace_limits=None, show_contam=False, add_label=True, beam_models=None):
+    def oned_figure(self, bin=1, wave=None, show_beams=True, minor=0.1, tfit=None, show_rest=False, axc=None, figsize=[6, 4], fill=False, units='flam', min_sens_show=0.1, ylim_percentile=2, scale_on_stacked=False, show_individual_templates=False, apply_beam_mask=True, loglam_1d=True, trace_limits=None, show_contam=False, add_label=True, beam_models=None, median_filter_kwargs=None):
         """
         Make a figure showing the 1D spectra 
         
@@ -3824,7 +3845,8 @@ class GroupFitter(object):
         from scipy.interpolate import UnivariateSpline
 
         if (tfit is None) & (units in ['resid', 'nresid', 'spline']):
-            print('`tfit` not specified.  Can\'t plot units=\'{0}\'.'.format(units))
+            msg = '`tfit` not specified.  Can\'t plot units=\'{0}\''
+            print(msg.format(units))
             return False
 
         # Spectra
@@ -3864,7 +3886,9 @@ class GroupFitter(object):
                                                degree=3, df=df,
                                                get_matrix=True, log=True)
 
-                cspl, _, _, _ = np.linalg.lstsq(Aspl, tfit['cont1d'].flux[ran], rcond=-1)
+                cspl, _, _, _ = np.linalg.lstsq(Aspl,
+                                                tfit['cont1d'].flux[ran],
+                                                rcond=-1)
 
                 yspl = tfit['cont1d'].flux*0.
                 yspl[ran] = Aspl.dot(cspl)
@@ -3885,7 +3909,8 @@ class GroupFitter(object):
             w = sp[0]
             if show_rest:
                 zp1 = (1+tfit['z'])
-                xlabel = r'$\lambda_\mathrm{rest}$'+' (z={0:.3f})'.format(tfit['z'])
+                xlabel = r'$\lambda_\mathrm{rest}$'
+                xlabel += ' (z={0:.3f})'.format(tfit['z'])
 
         else:
             sp = None
@@ -3901,19 +3926,43 @@ class GroupFitter(object):
                 b_mask = 1
 
             if tfit is not None:
-                m_i = beam.compute_model(spectrum_1d=sp, is_cgs=True, in_place=False).reshape(beam.sh)
+                m_i = beam.compute_model(
+                             spectrum_1d=sp,
+                             is_cgs=True, 
+                             in_place=False
+                      ).reshape(beam.sh)
+                      
+                if median_filter_kwargs is not None:
+                    _fdata, _ft = utils.safe_nanmedian_filter(
+                                           m_i, 
+                                           filter_kwargs=median_filter_kwargs,
+                                           axis=1,
+                                           cval=0.0,
+                                           clean=True
+                                   )
+                    
+                    m_i -= _fdata
+                
             elif beam_models is not None:
                 m_i = beam_models[i]
             else:
                 m_i = None
 
             if mspl is not None:
-                mspl_i = beam.compute_model(spectrum_1d=mspl, is_cgs=True, in_place=False).reshape(beam.sh)
+                mspl_i = beam.compute_model(
+                                  spectrum_1d=mspl,
+                                  is_cgs=True,
+                                  in_place=False
+                         ).reshape(beam.sh)
 
             try:
                 f_i = beam.flat_flam.reshape(beam.sh)*1
             except:
-                f_i = beam.compute_model(spectrum_1d=spf, is_cgs=True, in_place=False).reshape(beam.sh)
+                f_i = beam.compute_model(
+                                spectrum_1d=spf,
+                                is_cgs=True,
+                                in_place=False
+                      ).reshape(beam.sh)
 
             if hasattr(beam, 'init_epsf'):  # grizli.model.BeamCutout
                 if beam.grism.instrument == 'NIRISS':
@@ -3926,17 +3975,33 @@ class GroupFitter(object):
                     clean -= tfit['cfit']['bg {0:03d}'.format(i)][0]
 
                 if m_i is not None:
-                    w, flm, erm = beam.beam.optimal_extract(m_i, bin=bin, ivar=beam.ivar*b_mask)
+                    w, flm, erm = beam.beam.optimal_extract(
+                                              m_i,
+                                              bin=bin,
+                                              ivar=beam.ivar*b_mask
+                                              )
                 else:
                     flm = None
 
                 if mspl is not None:
-                    w, flspl, erm = beam.beam.optimal_extract(mspl_i, bin=bin, ivar=beam.ivar*b_mask)
+                    w, flspl, erm = beam.beam.optimal_extract(
+                                                    mspl_i,
+                                                    bin=bin,
+                                                    ivar=beam.ivar*b_mask
+                                                    )
 
-                w, fl, er = beam.beam.optimal_extract(clean, bin=bin, ivar=beam.ivar*b_mask)
-                #w, flc, erc = beam.beam.optimal_extract(beam.contam, bin=bin, ivar=beam.ivar*b_mask)
-                w, sens, ers = beam.beam.optimal_extract(f_i, bin=bin, ivar=beam.ivar*b_mask)
-                #sens = beam.beam.sensitivity
+                w, fl, er = beam.beam.optimal_extract(
+                                             clean,
+                                             bin=bin,
+                                             ivar=beam.ivar*b_mask
+                                             )
+
+                w, sens, ers = beam.beam.optimal_extract(
+                                             f_i,
+                                             bin=bin,
+                                             ivar=beam.ivar*b_mask
+                                             )
+            
             else:
                 grism = beam.grism
                 clean = beam.sci - beam.contam
@@ -3944,14 +4009,29 @@ class GroupFitter(object):
                     clean -= - tfit['cfit']['bg {0:03d}'.format(i)][0]
 
                 if m_i is not None:
-                    w, flm, erm = beam.optimal_extract(m_i, bin=bin, ivar=beam.ivar*b_mask)
+                    w, flm, erm = beam.optimal_extract(
+                                               m_i,
+                                               bin=bin,
+                                               ivar=beam.ivar*b_mask
+                                               )
 
                 if mspl is not None:
-                    w, flspl, erm = beam.beam.optimal_extract(mspl_i, bin=bin, ivar=beam.ivar*b_mask)
+                    w, flspl, erm = beam.beam.optimal_extract(
+                                                mspl_i,
+                                                bin=bin,
+                                                ivar=beam.ivar*b_mask
+                                                )
 
-                w, fl, er = beam.optimal_extract(clean, bin=bin, ivar=beam.ivar*b_mask)
-                #w, flc, erc = beam.optimal_extract(beam.contam, bin=bin, ivar=beam.ivar*b_mask)
-                w, sens, ers = beam.optimal_extract(f_i, bin=bin, ivar=beam.ivar*b_mask)
+                w, fl, er = beam.optimal_extract(
+                                                clean,
+                                                bin=bin,
+                                                ivar=beam.ivar*b_mask
+                                                )
+                w, sens, ers = beam.optimal_extract(
+                                                f_i,
+                                                bin=bin,
+                                                ivar=beam.ivar*b_mask
+                                                )
 
                 #sens = beam.sens
 
@@ -4006,20 +4086,31 @@ class GroupFitter(object):
 
             f_alpha = 1./(self.Ngrism[grism.upper()])*0.8  # **0.5
 
-            # Plot
-            # pscale = 1.
-            # if hasattr(self, 'pscale'):
-            #     if (self.pscale is not None):
-            #         pscale = self.compute_scale_array(self.pscale, w[clip]*1.e4)
-
             if show_beams:
 
                 if (show_beams == 1) & (f_alpha < 0.09):
-                    axc.errorbar(w[clip]/zp1, fl[clip], er[clip], color='k', alpha=f_alpha, marker='.', linestyle='None', zorder=1)
+                    axc.errorbar(w[clip]/zp1, fl[clip], er[clip],
+                                 color='k',
+                                 alpha=f_alpha,
+                                 marker='.',
+                                 linestyle='None',
+                                 zorder=1
+                                 )
                 else:
-                    axc.errorbar(w[clip]/zp1, fl[clip], er[clip], color=GRISM_COLORS[grism], alpha=f_alpha, marker='.', linestyle='None', zorder=1)
+                    axc.errorbar(w[clip]/zp1, fl[clip], er[clip], 
+                                 color=GRISM_COLORS[grism],
+                                 alpha=f_alpha,
+                                 marker='.',
+                                 linestyle='None',
+                                 zorder=1
+                                 )
             if flm is not None:
-                axc.plot(w[clip]/zp1, flm[clip], color='r', alpha=f_alpha, linewidth=2, zorder=10)
+                axc.plot(w[clip]/zp1, flm[clip],
+                         color='r',
+                         alpha=f_alpha,
+                         linewidth=2,
+                         zorder=10
+                         )
 
                 # Plot limits
                 ep = np.percentile(er[clip], ylim_percentile)
@@ -4036,9 +4127,6 @@ class GroupFitter(object):
 
                 ymin = np.minimum(ymin, np.percentile((fl-er*0.)[clip], 5))
 
-            #wmax = np.maximum(wmax, w[clip].max())
-            #wmin = np.minimum(wmin, w[clip].min())
-
         lims = [utils.GRISM_LIMITS[g][:2] for g in self.PA]
         wmin = np.min(lims)  # *1.e4
         wmax = np.max(lims)  # *1.e4
@@ -4050,14 +4138,15 @@ class GroupFitter(object):
         except:
             axc.semilogx(subsx=[wmax])
             
-        # axc.set_xticklabels([])
         axc.set_xlabel(xlabel)
         axc.set_ylabel(unit_label)
-        # axc.xaxis.set_major_locator(MultipleLocator(0.1))
 
         for ax in [axc]:  # [axa, axb, axc]:
 
-            labels = np.arange(np.ceil(wmin/minor/zp1), np.ceil(wmax/minor/zp1))*minor
+            labels = np.arange(np.ceil(wmin/minor/zp1), 
+                               np.ceil(wmax/minor/zp1)
+                               )*minor
+                               
             ax.set_xticks(labels)
             if minor < 0.1:
                 ax.set_xticklabels(['{0:.2f}'.format(li) for li in labels])
@@ -4070,9 +4159,21 @@ class GroupFitter(object):
             ymax = -1.e30
 
         if self.Nphot > 0:
-            sp_flat = self.optimal_extract(self.flat_flam[self.fit_mask[:-self.Nphotbands]], bin=bin, wave=wave, loglam=loglam_1d, trace_limits=trace_limits)
+            sp_flat = self.optimal_extract(
+                              self.flat_flam[self.fit_mask[:-self.Nphotbands]],
+                              bin=bin,
+                              wave=wave,
+                              loglam=loglam_1d,
+                              trace_limits=trace_limits
+                              )
         else:
-            sp_flat = self.optimal_extract(self.flat_flam[self.fit_mask], bin=bin, wave=wave, loglam=loglam_1d, trace_limits=trace_limits)
+            sp_flat = self.optimal_extract(
+                              self.flat_flam[self.fit_mask],
+                              bin=bin,
+                              wave=wave,
+                              loglam=loglam_1d,
+                              trace_limits=trace_limits
+                              )
 
         if tfit is not None:
             bg_model = self.get_flat_background(tfit['coeffs'], apply_mask=True)
@@ -4102,7 +4203,10 @@ class GroupFitter(object):
 
         for g in sp_data:
 
-            clip = (sp_flat[g]['flux'] != 0) & np.isfinite(sp_data[g]['flux']) & np.isfinite(sp_data[g]['err']) & np.isfinite(sp_flat[g]['flux'])
+            clip = (sp_flat[g]['flux'] != 0) & np.isfinite(sp_data[g]['flux'])
+            clip &= np.isfinite(sp_data[g]['err'])
+            clip &= np.isfinite(sp_flat[g]['flux'])
+            
             if tfit is not None:
                 clip &= np.isfinite(sp_model[g]['flux'])
 
@@ -4112,7 +4216,9 @@ class GroupFitter(object):
             pscale = 1.
             if hasattr(self, 'pscale'):
                 if (self.pscale is not None):
-                    pscale = self.compute_scale_array(self.pscale, sp_data[g]['wave'])
+                    pscale = self.compute_scale_array(self.pscale, 
+                                                      sp_data[g]['wave']
+                                                      )
 
             if units.lower() == 'njy':
                 unit_corr = sp_data[g]['wave']**2/sp_flat[g]['flux']
@@ -4142,9 +4248,22 @@ class GroupFitter(object):
             ep = np.percentile(err, ylim_percentile)
 
             if fill:
-                axc.fill_between(sp_data[g]['wave'][clip]/zp1/1.e4, flux-err, flux+err, color=GRISM_COLORS[g], alpha=0.8, zorder=1, label=g)
+                axc.fill_between(sp_data[g]['wave'][clip]/zp1/1.e4,
+                                 flux-err, flux+err,
+                                 color=GRISM_COLORS[g],
+                                 alpha=0.8,
+                                 zorder=1,
+                                 label=g
+                                 )
             else:
-                axc.errorbar(sp_data[g]['wave'][clip]/zp1/1.e4, flux, err, color=GRISM_COLORS[g], alpha=0.8, marker='.', linestyle='None', zorder=1, label=g)
+                axc.errorbar(sp_data[g]['wave'][clip]/zp1/1.e4, flux, err, 
+                             color=GRISM_COLORS[g],
+                             alpha=0.8,
+                             marker='.',
+                             linestyle='None',
+                             zorder=1,
+                             label=g
+                             )
 
             if show_contam:
                 contam = (sp_contam[g]['flux']*unit_corr/pscale)[clip]
@@ -4169,14 +4288,20 @@ class GroupFitter(object):
         axc.grid()
 
         if (ymin-0.2*ymax < 0) & (1.2*ymax > 0):
-            axc.plot([wmin/zp1, wmax/zp1], [0, 0], color='k', linestyle=':', alpha=0.8)
+            axc.plot([wmin/zp1, wmax/zp1], [0, 0],
+                     color='k',
+                     linestyle=':',
+                     alpha=0.8)
 
         # Individual templates
         if ((tfit is not None) & (show_individual_templates > 0) &
             (units.lower() in ['flam', 'njy', 'ujy'])):
 
-            xt, yt, mt = utils.array_templates(tfit['templates'], z=tfit['z'],
-                                            apply_igm=(tfit['z'] > IGM_MINZ))
+            xt, yt, mt = utils.array_templates(tfit['templates'],
+                                               z=tfit['z'],
+                                               apply_igm=(tfit['z'] > IGM_MINZ)
+                                               )
+                                               
             cfit = np.array([tfit['cfit'][t][0] for t in tfit['cfit']])
 
             xt *= (1+tfit['z'])
@@ -4190,7 +4315,9 @@ class GroupFitter(object):
 
             tscl = (yt.T*cfit[self.N:]).T/(1+tfit['z'])*unit_corr
             t_names = np.array(list(tfit['cfit'].keys()))[self.N:]
-            is_spline = np.array([t.split()[0] in ['bspl', 'step', 'poly'] for t in tfit['cfit']][self.N:])
+            is_spline = np.array([t.split()[0] in ['bspl', 'step', 'poly']
+                                  for t in tfit['cfit']
+                                  ][self.N:])
 
             if is_spline.sum() > 0:
                 spline_templ = tscl[is_spline,:].sum(axis=1)
@@ -4198,12 +4325,17 @@ class GroupFitter(object):
                 for ti in tscl[is_spline,:]:
                     axc.plot(xt/zp1/1.e4, ti, color='k', alpha=0.1)
 
-            for ci, ti, tn in zip(cfit[self.N:][~is_spline], tscl[~is_spline,:], t_names[~is_spline]):
+            for ci, ti, tn in zip(cfit[self.N:][~is_spline], 
+                                  tscl[~is_spline,:],
+                                  t_names[~is_spline]):
                 if ci == 0:
                     continue
 
                 if show_individual_templates > 1:
-                    axc.plot(xt/zp1/1.e4, ti, alpha=0.6, label=tn.strip('line '))
+                    axc.plot(xt/zp1/1.e4, ti,
+                             alpha=0.6,
+                             label=tn.strip('line ')
+                             )
                 else:
                     axc.plot(xt/zp1/1.e4, ti, alpha=0.6)
 
@@ -4401,6 +4533,8 @@ class GroupFitter(object):
                         delattr(beam, attr)
                     
                 beam.beam.init_optimal_profile(seg_ids=seg_ids)
+                # zihao test optimal profile
+                # beam.beam.optimal_profile = np.ones_like(beam.beam.optimal_profile)
                 p.append(beam.beam.optimal_profile.flatten()[beam.fit_mask])
 
             self.optimal_profile_mask = np.hstack(p)
@@ -4492,7 +4626,7 @@ class GroupFitter(object):
         """
         mfull = []
         for ib, beam in enumerate(self.beams):
-            if spectrum_1d is -1:
+            if spectrum_1d == -1:
                 model_i = beam.model*1
             else:
                 model_i = beam.compute_model(id=id, spectrum_1d=spectrum_1d,
@@ -4669,7 +4803,9 @@ def show_drizzled_lines(line_hdu, full_line_list=['OII', 'Hb', 'OIII', 'Ha+NII',
     #print(line_hdu[0].header['HASLINES'], show_lines)
 
     # Dimensions
-    pix_size = np.abs(line_hdu['DSCI'].header['CD1_1']*3600)
+    line_wcs = pywcs.WCS(line_hdu['DSCI'].header)
+    pix_size = utils.get_wcs_pscale(line_wcs)
+    #pix_size = np.abs(line_hdu['DSCI'].header['CD1_1']*3600)
     majorLocator = MultipleLocator(1.)  # /pix_size)
     N = line_hdu['DSCI'].data.shape[0]/2
 
@@ -4679,6 +4815,7 @@ def show_drizzled_lines(line_hdu, full_line_list=['OII', 'Hb', 'OIII', 'Ha+NII',
     # Assume square
     sh = line_hdu['DSCI'].data.shape
     dp = -0.5*pix_size  # FITS reference is center of a pixel, array is edge
+    dp = 0
     extent = (-imsize_arcsec/2.-dp, imsize_arcsec/2.-dp,
               -imsize_arcsec/2.-dp, imsize_arcsec/2.-dp)
 
@@ -4705,9 +4842,24 @@ def show_drizzled_lines(line_hdu, full_line_list=['OII', 'Hb', 'OIII', 'Ha+NII',
         ax.text(0.03, 0.97, line_hdu[dext].header['FILTER'],
                 transform=ax.transAxes, ha='left', va='top', fontsize=8)
 
-    ax.set_xlabel('RA')
-    ax.set_ylabel('Decl.')
-
+    #ax.set_xlabel('RA')
+    #ax.set_ylabel('Decl.')
+    
+    # Compass
+    cosd = np.cos(line_hdu['DSCI'].header['CRVAL2']/180*np.pi)
+    dra = np.array([1.5, 1,0,0,0])/3600.*0.12*size_arcsec/cosd
+    dde = np.array([0, 0,0,1,1.5])/3600.*0.12*size_arcsec
+    cx, cy = line_wcs.all_world2pix(crv[0]+dra, crv[1]+dde, 0)
+    cx = (cx-cx.max())*pix_size
+    cy = (cy-cy.max())*pix_size
+    c0 = 0.95*size_arcsec
+    ax.plot(cx[1:-1]+c0, cy[1:-1]+c0,
+            linewidth=1, color='0.5')
+    ax.text(cx[0]+c0, cy[0]+c0, r'$E$',
+            ha='center', va='center', fontsize=7, color='0.5')
+    ax.text(cx[4]+c0, cy[4]+c0, r'$N$',
+            ha='center', va='center', fontsize=7, color='0.5')
+    
     # 1" ticks
     ax.errorbar(-0.5, -0.9*size_arcsec, yerr=0, xerr=0.5, color='k')
     ax.text(-0.5, -0.9*size_arcsec, r'$1^{\prime\prime}$', ha='center', va='bottom', color='k')
@@ -4715,7 +4867,8 @@ def show_drizzled_lines(line_hdu, full_line_list=['OII', 'Hb', 'OIII', 'Ha+NII',
     # Line maps
     for i, line in enumerate(show_lines):
         ax = fig.add_subplot(1, NL+1, 2+i)
-        ax.imshow(line_hdu['LINE', line].data*scale, vmin=-0.02, vmax=0.6, cmap=cmap, origin='lower', extent=extent)
+        ax.imshow(line_hdu['LINE', line].data*scale, vmin=-0.02,
+                  vmax=0.6, cmap=cmap, origin='lower', extent=extent)
         ax.set_title(r'%s %.3f $\mu$m' % (line, line_hdu['LINE', line].header['WAVELEN']/1.e4))
 
     # End things

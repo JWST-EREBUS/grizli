@@ -73,7 +73,7 @@ def check_object_in_footprint(id, wcs_fits, cat, rd=None):
     return has_point
 
 
-def extract_beams_from_flt(root, bucket, id, clean=True, silent=False):
+def extract_beams_from_flt(root, bucket, id, size=32, clean=True, silent=False):
     """
     Download GrismFLT files and extract the beams file
     """
@@ -135,7 +135,7 @@ def extract_beams_from_flt(root, bucket, id, clean=True, silent=False):
 
     if not silent:
         print('Read {0} GrismFLT files'.format(len(flt_files)))
-
+    
     if os.path.exists('{0}_fit_args.npy'.format(root)):
         args_file = '{0}_fit_args.npy'.format(root)
     else:
@@ -148,6 +148,8 @@ def extract_beams_from_flt(root, bucket, id, clean=True, silent=False):
         flt, ext, _, _ = os.path.basename(file).split('.')
         if flt.startswith('i'):
             fl = 'flt'
+        elif flt.startswith('jw'):
+            fl = 'rate'
         else:
             fl = 'flc'
 
@@ -184,7 +186,7 @@ def extract_beams_from_flt(root, bucket, id, clean=True, silent=False):
                                       run_fit=False, poly_order=7,
                                       master_files=[os.path.basename(file)],
                                       grp=None, bad_pa_threshold=None,
-                                      fit_trace_shift=False, size=32,
+                                      fit_trace_shift=False, size=size,
                                       diff=True, min_sens=0.02,
                                       skip_complete=True, fit_args={},
                                       args_file=args_file,
@@ -308,11 +310,14 @@ def run_grizli_fit(event):
                 event_kwargs[k] = json.loads(event[k])
             except:
                 event_kwargs[k] = event[k]
-
+    
     # Defaults
     if 'skip_started' not in event_kwargs:
         event_kwargs['skip_started'] = True
-
+    
+    if 'size' not in event_kwargs:
+        event_kwargs['size'] = 32
+        
     for k in ['quasar_fit', 'extract_from_flt', 'fit_stars', 'beam_info_only']:
         if k not in event_kwargs:
             event_kwargs[k] = False
@@ -448,6 +453,7 @@ def run_grizli_fit(event):
             pass
 
         status = extract_beams_from_flt(root, event_kwargs['bucket'], id,
+                                        size=event_kwargs['size'],
                                         clean=run_clean, silent=silent)
 
         # Garbage collector
@@ -742,11 +748,38 @@ def run_grizli_fit(event):
             output_path = 'HST/Pipeline/{0}/Extractions'.format(root)
 
     else:
-
         # Normal galaxy redshift fit
-        fitting.run_all_parallel(id, fit_only_beams=True, fit_beams=False,
-                                 args_file=args_file, **event_kwargs)
-
+        res = fitting.run_all_parallel(id, get_output_data=True,
+                                       fit_only_beams=True, fit_beams=False,
+                                       args_file=args_file,
+                                       **event_kwargs)
+        
+        if root in ('fresco-gds-med', 'fresco-gdn-med'):
+            try:
+                mb, tfit = res[0], res[3]
+                # 1D for FRESCO
+                fig1 = mb.oned_figure(bin=2, tfit=tfit,
+                                      show_rest=False, minor=0.1,
+                                      figsize=(9,3), median_filter_kwargs=None,
+                                      ylim_percentile=0.1)
+                
+                hdu, fig2 = mb.drizzle_grisms_and_PAs(fcontam=0.0, 
+                                                     flambda=False,
+                                                     kernel='point', size=16,
+                                                     tfit=tfit, diff=False, 
+                                                      mask_segmentation=False,
+                                    fig_args=dict(mask_segmentation=False, 
+                                                  average_only=False,
+                                                  scale_size=1, 
+                                                  cmap='viridis_r', 
+                                                  width_ratio=0.11),
+                                                    )
+            
+                fig1.savefig(f'{root}_{id:05d}.1d.png')
+                fig2.savefig(f'{root}_{id:05d}.2d.png')
+            except:
+                print('FRESCO outputs failed')
+                
         if output_path is None:
             output_path = 'HST/Pipeline/{0}/Extractions'.format(root)
 

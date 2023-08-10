@@ -17,7 +17,7 @@ import numpy as np
 
 import astropy.units as u
 
-from sregion import SRegion
+from sregion import SRegion, patch_from_polygon
 
 from . import GRIZLI_PATH
 
@@ -43,13 +43,14 @@ SNS_HUSL = {'r': (0.9677975592919913, 0.44127456009157356, 0.5358103155058701),
  'purple': (0.6423044349219739, 0.5497680051256467, 0.9582651433656727),
  'pink': (0.9603888539940703, 0.3814317878772117, 0.8683117650835491)}
 
+#zihao modified, add color for F322W2
 GRISM_COLORS = {'G800L': (0.0, 0.4470588235294118, 0.6980392156862745),
       'G102': (0.0, 0.6196078431372549, 0.45098039215686275),
       'G141': (0.8352941176470589, 0.3686274509803922, 0.0),
       'none': (0.8, 0.4745098039215686, 0.6549019607843137),
       'G150': 'k',
       'F277W': (0.0, 0.6196078431372549, 0.45098039215686275),
-      'F322W2': 'aqua',
+      'F322W2':'aqua',
       'F356W': (0.8352941176470589, 0.3686274509803922, 0.0),
       'F444W': (0.8, 0.4745098039215686, 0.6549019607843137),
       'F410M': (0.0, 0.4470588235294118, 0.6980392156862745),
@@ -74,40 +75,40 @@ GRISM_MAJOR = {'G102': 0.1, 'G141': 0.1, # WFC3/IR
                'BLUE': 0.1, 'RED': 0.1, # Euclid
                'GRISM':0.1, 'G150':0.1  # Roman
                }
-
 # ----zihao modified----
 # Change GRISM_LIMITS for NIRCam filters.
 GRISM_LIMITS = {'G800L': [0.545, 1.02, 40.],  # ACS/WFC
-                'G280': [0.2, 0.4, 14],  # WFC3/UVIS
-                'G102': [0.77, 1.18, 23.],  # WFC3/IR
-                'G141': [1.06, 1.73, 46.0],
-                'GRISM': [0.98, 1.98, 11.],  # WFIRST/Roman
-                'G150': [0.98, 1.98, 11.],  
-                'F090W': [0.76, 1.04, 45.0],  # NIRISS
-                'F115W': [0.97, 1.32, 45.0],
-                'F140M': [1.28, 1.52, 45.0],
-                'F158M': [1.28, 1.72, 45.0],
-                'F150W': [1.28, 1.72, 45.0],
-                'F200W': [1.68, 2.30, 45.0],
-                'F140M': [1.20, 1.60, 45.0],
-                'CLEARP': [0.76, 2.3, 45.0],
-                'F277W': [2.5, 3.2, 10.], # NIRCAM
-                'F356W': [3.05, 4.1, 10.],
-                'F444W': [3.82, 5.08, 10],
-                'F410M': [3.8, 4.38, 10],
-                'F322W2':[2.4, 4.0, 10],
-                #    'F277W': [2.5, 3.2, 20.],
-                #    'F356W': [3.05, 4.1, 20.],
-                #    'F444W': [3.82, 5.08, 20],
-                #    'F410M': [3.8, 4.38, 20],
-                #    'F322W2':[2.4, 4.0, 20],
-                'BLUE': [0.8, 1.2, 10.],  # Euclid
-                'RED': [1.1, 1.9, 14.]}
+          'G280': [0.2, 0.4, 14],  # WFC3/UVIS
+           'G102': [0.77, 1.18, 23.],  # WFC3/IR
+           'G141': [1.06, 1.73, 46.0],
+           'GRISM': [0.98, 1.98, 11.],  # WFIRST/Roman
+           'G150': [0.98, 1.98, 11.],  
+           'F090W': [0.76, 1.04, 45.0],  # NIRISS
+           'F115W': [0.97, 1.32, 45.0],
+           'F140M': [1.28, 1.52, 45.0],
+           'F158M': [1.28, 1.72, 45.0],
+           'F150W': [1.28, 1.72, 45.0],
+           'F200W': [1.68, 2.30, 45.0],
+           'F140M': [1.20, 1.60, 45.0],
+           'CLEARP': [0.76, 2.3, 45.0],
+            'F277W': [2.5, 3.2, 10.], # NIRCAM
+            'F356W': [3.05, 4.1, 10.],
+            'F444W': [3.82, 5.08, 10],
+            'F410M': [3.8, 4.38, 10],
+            'F322W2':[2.4, 4.0, 10],
+        #    'F277W': [2.5, 3.2, 20.],  # NIRCAM
+        #    'F356W': [3.05, 4.1, 20.],
+        #    'F444W': [3.82, 5.08, 20],
+        #    'F410M': [3.8, 4.38, 20],
+           'BLUE': [0.8, 1.2, 10.],  # Euclid
+           'RED': [1.1, 1.9, 14.]}
 
 #DEFAULT_LINE_LIST = ['PaB', 'HeI-1083', 'SIII', 'OII-7325', 'ArIII-7138', 'SII', 'Ha+NII', 'OI-6302', 'HeI-5877', 'OIII', 'Hb', 'OIII-4363', 'Hg', 'Hd', 'H8','H9','NeIII-3867', 'OII', 'NeVI-3426', 'NeV-3346', 'MgII','CIV-1549', 'CIII-1908', 'OIII-1663', 'HeII-1640', 'NIII-1750', 'NIV-1487', 'NV-1240', 'Lya']
 
 # Line species for determining individual line fluxes.  See `load_templates`.
-DEFAULT_LINE_LIST = ['PaB', 'HeI-1083', 'SIII', 'OII-7325', 'ArIII-7138',
+DEFAULT_LINE_LIST = ['BrA','BrB','BrG','PfG','PfD',
+                     'PaA','PaB','PaG','PaD',
+                     'HeI-1083', 'SIII', 'OII-7325', 'ArIII-7138',
                      'SII', 'Ha', 'OI-6302', 'HeI-5877', 'OIII', 'Hb', 
                      'OIII-4363', 'Hg', 'Hd', 'H7', 'H8', 'H9', 'H10', 
                      'NeIII-3867', 'OII', 'NeVI-3426', 'NeV-3346', 'MgII', 
@@ -140,16 +141,16 @@ JWST_TRANSLATE = {'RA_TARG':'TARG_RA',
                   'EXPTIME':'EFFEXPTM',
                   'PA_V3':'ROLL_REF'}
 
-def get_flt_info(files=[], columns=['FILE', 'FILTER', 'PUPIL', 'INSTRUME', 'DETECTOR', 'TARGNAME', 'DATE-OBS', 'TIME-OBS', 'EXPSTART', 'EXPTIME', 'PA_V3', 'RA_TARG', 'DEC_TARG', 'POSTARG1', 'POSTARG2'], translate=JWST_TRANSLATE, defaults={'PUPIL':'---', 'PA_V3':0.0}, jwst_detector=True):
+def get_flt_info(files=[], columns=['FILE', 'FILTER', 'PUPIL', 'INSTRUME', 'DETECTOR', 'TARGNAME', 'DATE-OBS', 'TIME-OBS', 'EXPSTART', 'EXPTIME', 'PA_V3', 'RA_TARG', 'DEC_TARG', 'POSTARG1', 'POSTARG2'], translate=JWST_TRANSLATE, defaults={'PUPIL':'---', 'TARGNAME':'indef','PA_V3':0.0}, jwst_detector=True):
     """Extract header information from a list of FLT files
 
     Parameters
-    -----------
+    ----------
     files : list
         List of exposure filenames.
 
     Returns
-    --------
+    -------
     tab : `~astropy.table.Table`
         Table containing header keywords
 
@@ -222,7 +223,7 @@ def radec_to_targname(ra=0, dec=0, round_arcsec=(4, 60), precision=2, targstr='j
     """Turn decimal degree coordinates into a string with rounding.
 
     Parameters
-    -----------
+    ----------
     ra, dec : float
         Sky coordinates in decimal degrees
 
@@ -243,7 +244,7 @@ def radec_to_targname(ra=0, dec=0, round_arcsec=(4, 60), precision=2, targstr='j
         `RA_TARG`, `DEC_TARG`.
 
     Returns
-    --------
+    -------
     targname : str
         Target string, see the example above.
     
@@ -329,7 +330,7 @@ def blot_nearest_exact(in_data, in_wcs, out_wcs, verbose=True, stepsize=-1,
         scales (out**2/in**2), i.e., the pixel areas.
 
     wcs_mask : bool
-        Use fast WCS masking.  If False, use `pyregion`.
+        Use fast WCS masking.  If False, use ``regions``.
 
     fill_value : int/float
         Value in `out_data` not covered by `in_data`.
@@ -340,8 +341,8 @@ def blot_nearest_exact(in_data, in_wcs, out_wcs, verbose=True, stepsize=-1,
         Blotted data.
 
     """
+    from regions import Regions
     from shapely.geometry import Polygon
-    import pyregion
     import scipy.ndimage as nd
     from drizzlepac import cdriz
 
@@ -390,9 +391,9 @@ def blot_nearest_exact(in_data, in_wcs, out_wcs, verbose=True, stepsize=-1,
         mask = out_xy_path.contains_points(pts).reshape(out_sh)
     else:
         olap_poly = np.array(olap.exterior.xy)
-        poly_reg = "fk5\npolygon("+','.join(['{0}'.format(p) for p in olap_poly.T.flatten()])+')\n'
-        reg = pyregion.parse(poly_reg)
-        mask = reg.get_mask(header=to_header(out_wcs), shape=out_sh)
+        poly_reg = "fk5\npolygon("+','.join(['{0}'.format(p + 1) for p in olap_poly.T.flatten()])+')\n'
+        reg = Regions.parse(poly_reg, format='ds9')[0]
+        mask = reg.to_mask().to_image(shape=out_sh)
 
     #yp, xp = np.indices(in_data.shape)
     #xi, yi = xp[mask], yp[mask]
@@ -711,7 +712,7 @@ def parse_flt_files(files=[], info=None, uniquename=False, use_visit=False,
         PATH to search for `flt` files if ``info`` not provided
     
     Returns
-    --------
+    -------
     output_list : dict
         Dictionary split by target/filter/pa_v3. Keys are derived visit
         product names and values are lists of exposure filenames corresponding
@@ -1267,7 +1268,7 @@ def parse_filter_from_header(header, filter_only=False, jwst_detector=False, **k
         G800L
             
     Parameters
-    -----------
+    ----------
     header : `~astropy.io.fits.Header`
         Image header with FILTER or FILTER1,FILTER2,...,FILTERN keywords
     
@@ -1282,7 +1283,7 @@ def parse_filter_from_header(header, filter_only=False, jwst_detector=False, **k
         these instruments.
         
     Returns
-    --------
+    -------
     filter : str
 
     """
@@ -1721,7 +1722,7 @@ def detect_with_photutils(sci, err=None, dq=None, seg=None, detect_thresh=2.,
         sky coordinates of detected objects.
 
     Returns
-    ---------
+    -------
     catalog : `~astropy.table.Table`
         Object catalog with the default parameters.
     """
@@ -1880,40 +1881,72 @@ def get_line_wavelengths():
     line_ratios = OrderedDict()
 
     # Paschen: https://www.gemini.edu/sciops/instruments/nearir-resources/astronomical-lines/h-lines
-    line_wavelengths['PaA'] = [18751.0]
+    
+    # Rh = 0.0010967757
+    # k = Rh * (1/n0**2 - 1/n**2)
+    # wave = 1./k # Angstroms
+    
+    # Pfund n0=5
+    line_wavelengths['PfA'] = [74598.8]
+    line_ratios['PfA'] = [1.]
+    line_wavelengths['PfB'] = [46537.9]
+    line_ratios['PfB'] = [1.]
+    line_wavelengths['PfG'] = [37405.7]
+    line_ratios['PfG'] = [1.]
+    line_wavelengths['PfD'] = [32970.0]
+    line_ratios['PfD'] = [1.]
+    line_wavelengths['PfE'] = [30392.1]
+    line_ratios['PfE'] = [1.]
+    
+    # Brackett n0=4
+    line_wavelengths['BrA'] = [40522.8]
+    line_ratios['BrA'] = [1.]
+    line_wavelengths['BrB'] = [26258.8]
+    line_ratios['BrB'] = [1.]
+    line_wavelengths['BrG'] = [21661.3]
+    line_ratios['BrG'] = [1.]
+    line_wavelengths['BrD'] = [19451.0]
+    line_ratios['BrD'] = [1.]
+    line_wavelengths['BrE'] = [18179.2]
+    line_ratios['BrE'] = [1.]
+    
+    # Paschen n0=3
+    line_wavelengths['PaA'] = [18756.3]
     line_ratios['PaA'] = [1.]
-    line_wavelengths['PaB'] = [12821.6]
+    line_wavelengths['PaB'] = [12821.7]
     line_ratios['PaB'] = [1.]
-    line_wavelengths['PaG'] = [10941.1]
+    line_wavelengths['PaG'] = [10941.2]
     line_ratios['PaG'] = [1.]
-    line_wavelengths['PaD'] = [10049.0]
+    line_wavelengths['PaD'] = [10052.2]
     line_ratios['PaD'] = [1.]
-
-    line_wavelengths['Ha'] = [6564.61]
+    line_wavelengths['Pa8'] = [9548.65]
+    line_ratios['Pa8'] = [1.]
+    line_wavelengths['Pa9'] = [9231.60]
+    line_ratios['Pa9'] = [1.]
+    line_wavelengths['Pa10'] = [9017.44]
+    line_ratios['Pa10'] = [1.]
+    
+    # Balmer n0=2
+    line_wavelengths['Ha'] = [6564.697]
     line_ratios['Ha'] = [1.]
-    line_wavelengths['Hb'] = [4862.71]
+    line_wavelengths['Hb'] = [4862.738]
     line_ratios['Hb'] = [1.]
-    line_wavelengths['Hg'] = [4341.692]
+    line_wavelengths['Hg'] = [4341.731]
     line_ratios['Hg'] = [1.]
-    line_wavelengths['Hd'] = [4102.892]
+    line_wavelengths['Hd'] = [4102.936]
     line_ratios['Hd'] = [1.]
 
-    line_wavelengths['H7'] = [3971.198]
+    line_wavelengths['H7'] = [3971.236]
     line_ratios['H7'] = [1.]
-
-    line_wavelengths['H8'] = [3890.166]
+    line_wavelengths['H8'] = [3890.191]
     line_ratios['H8'] = [1.]
-
-    line_wavelengths['H9'] = [3836.485]
+    line_wavelengths['H9'] = [3836.511]
     line_ratios['H9'] = [1.]
-
-    line_wavelengths['H10'] = [3798.987]
+    line_wavelengths['H10'] = [3799.014]
     line_ratios['H10'] = [1.]
-
-    line_wavelengths['H11'] = [3771.70]
+    line_wavelengths['H11'] = [3771.739]
     line_ratios['H11'] = [1.]
-
-    line_wavelengths['H12'] = [3751.22]
+    line_wavelengths['H12'] = [3751.255]
     line_ratios['H12'] = [1.]
 
     # Groves et al. 2011, Table 1
@@ -2048,6 +2081,12 @@ def get_line_wavelengths():
     line_ratios['HeI-3889'] = [1.]
     line_wavelengths['HeI-1083'] = [10832.057, 10833.306]
     line_ratios['HeI-1083'] = [1., 1.]
+    line_wavelengths['HeI-6678'] = [6678.10]
+    line_ratios['HeI-6678'] = [1.]
+    line_wavelengths['HeI-7065'] = [7067.1]
+    line_ratios['HeI-7065'] = [1.]
+    line_wavelengths['HeI-8446'] = [8446.7]
+    line_ratios['HeI-8446'] = [1.]
 
     # Osterbrock Table 4.5
     # -> N=4
@@ -2267,6 +2306,70 @@ def emission_line_templates():
         np.savetxt('fsps_{0}_lines.txt'.format(t), np.array([wave, neb_only]).T, fmt='%.5e', header=header)
 
         line_templates[t] = utils.SpectrumTemplate(wave=wave, flux=neb_only, name='fsps_{0}_lines'.format(t))
+
+
+def pah33(wave_grid):
+    """
+    Set of 3.3 um PAH lines from Li et al. 2020
+    
+    Returns
+    -------
+    pah_templates : list
+        List of `~grizli.utils.SpectrumTemplate` templates for three components
+        around 3.3 um
+    
+    """
+    pah_templates = {}
+    for lc, lw in zip([3.29, 3.40, 3.47], [0.043, 0.031, 0.100]):
+        ti = pah_line_template(wave_grid, center_um=lc, fwhm=lw)
+        pah_templates[ti.name] = ti
+    
+    return pah_templates
+
+
+def pah_line_template(wave_grid, center_um=3.29, fwhm=0.043):
+    """
+    Make a template for a broad PAH line with a Drude profile
+    
+    Default parameters in Lai et al. 2020
+    https://iopscience.iop.org/article/10.3847/1538-4357/abc002/pdf
+    from Tokunaga et al. 1991
+    
+    Drude equation and normalization from Yamada et al. 2013
+    
+    Parameters
+    ----------
+    wave_grid : array-like
+        Wavelength grid in angstroms
+    
+    center_um : float
+        Central wavelength in microns
+    
+    fwhm : float
+        Drude profile FWHM in microns
+    
+    Returns
+    -------
+    pah_templ : `~grizli.utils.SpectrumTemplate`
+        Template with the PAH feature
+    
+    """
+    br = 1.
+    gamma_width = fwhm/center_um
+    Iv = br*gamma_width**2
+    Iv /= ((wave_grid/1.e4/center_um - center_um*1.e4/wave_grid)**2
+           + gamma_width**2)
+
+    Inorm = np.pi*2.99e14/2.*br*gamma_width/center_um
+    Iv *= 1 / Inorm
+    
+    # Flambda
+    Ilam = Iv * 2.99e18 / (wave_grid)**2
+    
+    pah_templ = SpectrumTemplate(wave=wave_grid,
+                                 flux=Ilam, 
+                                 name=f'line PAH-{center_um:.2f}')
+    return pah_templ
 
 
 class SpectrumTemplate(object):
@@ -3210,7 +3313,7 @@ def split_spline_template(templ, wavelength_range=[5000, 2.4e4], Rspline=10, log
     squares.
 
     Parameters
-    ==========
+    ----------
 
     templ : `~grizli.utils.SpectrumTemplate`
         Template to split.
@@ -3226,7 +3329,7 @@ def split_spline_template(templ, wavelength_range=[5000, 2.4e4], Rspline=10, log
         Log-spaced splines
 
     Returns
-    =======
+    -------
 
     stemp : dict
 
@@ -3341,7 +3444,7 @@ def split_poly_template(templ, ref_wave=1.e4, order=3):
     squares.
 
     Parameters
-    ==========
+    ----------
     templ : `~grizli.utils.SpectrumTemplate`
         Template to split.
 
@@ -3352,7 +3455,7 @@ def split_poly_template(templ, ref_wave=1.e4, order=3):
         Polynomial order.  Returns order+1 templates.
 
     Returns
-    =======
+    -------
     ptemp : dict
 
         Dictionary of polynomial-component templates, with additional
@@ -4377,10 +4480,9 @@ class WCSFootprint(object):
 
     def get_patch(self, **kwargs):
         """
-        `~descartes.PolygonPatch` object
+        `~matplotlib.pach.PathPatch` object
         """
-        from descartes import PolygonPatch
-        return PolygonPatch(self.polygon, **kwargs)
+        return patch_from_polygon(self.polygon, **kwargs)
 
 
     @property
@@ -4797,6 +4899,11 @@ def to_header(wcs, add_naxis=True, relax=True, key=None):
             cd = k.replace('PC', 'CD')
             header.rename_keyword(k, cd)
     
+    if hasattr(wcs.wcs, 'cd'):
+        for i in [0,1]:
+            for j in [0,1]:
+                header[f'CD{i+1}_{j+1}'] = wcs.wcs.cd[i][j]
+                
     if hasattr(wcs, 'sip'):
         if hasattr(wcs.sip, 'crpix'):
             header['SIPCRPX1'], header['SIPCRPX2'] = wcs.sip.crpix
@@ -4882,8 +4989,8 @@ def make_wcsheader(ra=40.07293, dec=-1.6137748, size=2, pixscale=0.1, get_hdu=Fa
         npix = np.cast[int](np.round([size[0]/pixscale, size[1]/pixscale]))
 
     hout = pyfits.Header()
-    hout['CRPIX1'] = npix[0]/2+1
-    hout['CRPIX2'] = npix[1]/2+1
+    hout['CRPIX1'] = (npix[0]-1)/2+1
+    hout['CRPIX2'] = (npix[1]-1)/2+1
     hout['CRVAL1'] = ra
     hout['CRVAL2'] = dec
     hout['CD1_1'] = -cdelt[0]
@@ -4939,12 +5046,11 @@ def get_flt_footprint(flt_file, extensions=[1, 2, 3, 4], patch_args=None):
 
     Returns
     -------
-    fp / patch : `~shapely.geometry` object or `~descartes.PolygonPatch`
+    fp / patch : `~shapely.geometry` object or `matplotlib.patch.Patch`
         The footprint or footprint patch.
 
     """
     from shapely.geometry import Polygon
-    from descartes import PolygonPatch
 
     im = pyfits.open(flt_file)
     fp = None
@@ -4963,7 +5069,7 @@ def get_flt_footprint(flt_file, extensions=[1, 2, 3, 4], patch_args=None):
     im.close()
     
     if patch_args is not None:
-        patch = PolygonPatch(fp, **patch_args)
+        patch = patch_from_polygon(fp, **patch_args)
         return patch
     else:
         return fp
@@ -5006,7 +5112,6 @@ def make_maximal_wcs(files, pixel_scale=0.1, get_hdu=True, pad=90, verbose=True,
     """
     import numpy as np
     from shapely.geometry import Polygon
-    #from descartes import PolygonPatch
 
     import astropy.io.fits as pyfits
     import astropy.wcs as pywcs
@@ -5365,6 +5470,7 @@ def get_photom_scale(header):
     import yaml
     if 'TELESCOP' in header:
         if header['TELESCOP'] not in ['JWST']:
+            print(f"get_photom_scale: TELESCOP={header['TELESCOP']} is not 'JWST'")
             return header['TELESCOP'], 1.0
     else:
         return None, 1.0
@@ -5373,15 +5479,15 @@ def get_photom_scale(header):
                              'data/photom_correction.yml')
     
     if not os.path.exists(corr_file):
+        print(f'{corr_file} not found.')
         return None, 1
     
     with open(corr_file) as fp:
         corr = yaml.load(fp, Loader=yaml.SafeLoader)
-    
-    print(header['CRDS_CTX'], corr['CRDS_CTX_MAX'], corr_file)
-    
+        
     if 'CRDS_CTX' in header:
         if header['CRDS_CTX'] > corr['CRDS_CTX_MAX']:
+            print(f"get_photom_scale {corr_file}: {header['CRDS_CTX']} > {corr['CRDS_CTX_MAX']}")
             return header['CRDS_CTX'], 1.0
             
     key = '{0}-{1}'.format(header['DETECTOR'], header['FILTER'])
@@ -5389,9 +5495,11 @@ def get_photom_scale(header):
         key += '-{0}'.format(header['PUPIL'])
     
     if key not in corr:
+        print(f"get_photom_scale {corr_file}: {key} not found")
         return key, 1.0
     
     else:
+        print(f"get_photom_scale {corr_file}: Scale {key} by {1./corr[key]:.3f}")
         return key, 1./corr[key]
 
 
@@ -5400,6 +5508,7 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
                        dryrun=False, skip=None, extra_wfc3ir_badpix=True,
                        verbose=True,
                        scale_photom=True,
+                       calc_wcsmap=False,
                        niriss_ghost_kwargs={}):
     """
     Make drizzle mosaic from exposures in a visit dictionary
@@ -5566,14 +5675,18 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
             _inst = flt[0].header['INSTRUME']
             if (extra_wfc3ir_badpix) & (_inst in ['NIRCAM']):
                 _det = flt[0].header['DETECTOR']
-                bpfile = os.path.join(os.path.dirname(__file__), 
-                           f'data/nrc_lowpix_0916_{_det}.fits.gz')
+                bpfiles = [os.path.join(os.path.dirname(__file__), 
+                           f'data/nrc_badpix_230120_{_det}.fits.gz')]
+                bpfiles += [os.path.join(os.path.dirname(__file__), 
+                           f'data/nrc_lowpix_0916_{_det}.fits.gz')]
                 
-                if os.path.exists(bpfile):
-                    bpdata = pyfits.open(bpfile)[0].data
-                    bpdata = nd.binary_dilation(bpdata > 0, iterations=2)*1024
-                    msg = f'Use extra badpix in {bpfile}'
-                    log_comment(LOGFILE, msg, verbose=verbose)
+                for bpfile in bpfiles:
+                    if os.path.exists(bpfile):
+                        bpdata = pyfits.open(bpfile)[0].data
+                        bpdata = nd.binary_dilation(bpdata > 0)*1024
+                        msg = f'Use extra badpix in {bpfile}'
+                        log_comment(LOGFILE, msg, verbose=verbose)
+                        break
             else:
                 bpdata = np.zeros(flt['SCI'].data.shape, dtype=int)
                 
@@ -5724,7 +5837,7 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
             res = drizzle_array_groups(sci_list, wht_list, wcs_list,
                                      outputwcs=outputwcs,
                                      scale=0.1, kernel=kernel,
-                                     pixfrac=pixfrac, calc_wcsmap=False,
+                                     pixfrac=pixfrac, calc_wcsmap=calc_wcsmap,
                                      verbose=verbose, data=None)
 
             outsci, outwht, outctx, header, xoutwcs = res
@@ -5745,7 +5858,7 @@ def drizzle_from_visit(visit, output, pixfrac=1., kernel='point',
             res = drizzle_array_groups(sci_list, wht_list, wcs_list,
                                      outputwcs=outputwcs,
                                      scale=0.1, kernel=kernel,
-                                     pixfrac=pixfrac, calc_wcsmap=False,
+                                     pixfrac=pixfrac, calc_wcsmap=calc_wcsmap,
                                      verbose=verbose, data=data)
 
             outsci, outwht, outctx = res[:3]
@@ -5827,7 +5940,12 @@ def drizzle_array_groups(sci_list, wht_list, wcs_list, outputwcs=None,
 
     # Output header / WCS
     if outputwcs is None:
-        header, outputwcs = compute_output_wcs(wcs_list, pixel_scale=scale)
+        #header, outputwcs = compute_output_wcs(wcs_list, pixel_scale=scale)
+        header, outputwcs = make_maximal_wcs(wcs_list,
+                                             pixel_scale=scale,
+                                             verbose=False,
+                                             pad=0,
+                                             get_hdu=False)
     else:
         header = to_header(outputwcs)
 
@@ -5904,7 +6022,7 @@ class WCSMapAll:
         self.output = copy.deepcopy(output)
         #self.output = output
 
-        self.origin = origin
+        self.origin = 1 #origin
         self.shift = None
         self.rot = None
         self.scale = None
@@ -5996,14 +6114,17 @@ def compute_output_wcs(wcs_list, pixel_scale=0.1, max_size=10000):
     xsize = np.minimum(xsize, max_size*pixel_scale)
     ysize = np.minimum(ysize, max_size*pixel_scale)
 
-    header, outputwcs = make_wcsheader(ra=crval[0], dec=crval[1], size=(xsize, ysize), pixscale=pixel_scale, get_hdu=False, theta=0)
+    header, outputwcs = make_wcsheader(ra=crval[0], dec=crval[1],
+                     size=(xsize, ysize),
+                     pixscale=pixel_scale,
+                     get_hdu=False,
+                     theta=0)
 
     return header, outputwcs
 
 
 def symlink_templates(force=False):
     """Symlink templates from module to $GRIZLI/templates as part of the initial setup
-
     Parameters
     ----------
     force : bool
@@ -6014,24 +6135,19 @@ def symlink_templates(force=False):
     #     return False
 
     module_path = os.path.dirname(__file__)
+    templates_path = os.path.join(module_path, 'data/templates')
+
     out_path = os.path.join(GRIZLI_PATH, 'templates')
 
-    files = glob.glob(os.path.join(module_path, 'data/templates/*'))
-    files.sort()
+    if (not os.path.exists(out_path)) | force:
+        if os.path.exists(out_path):  # (force)
+            os.remove(out_path)
 
-    # print(files)
-    for file in files:
-        filename = os.path.basename(file)
-        out_file = os.path.join(out_path, filename)
-        #print(filename, out_file)
-        if (not os.path.exists(out_file)) | force:
-            if os.path.exists(out_file):  # (force)
-                os.remove(out_file)
-
-            os.symlink(file, out_file)
-            print('Symlink: {0} -> {1}'.format(file, out_path))
-        else:
-            print('File exists: {0}'.format(out_file))
+            os.symlink(templates_path, out_path)
+            print('Symlink: {0} -> {1}'.format(templates_path, out_path))
+    else:
+        print('Templates directory exists: {0}'.format(out_path))
+        print('Use `force=True` to force a new symbolic link.')
 
 
 def fetch_acs_wcs_files(beams_file, bucket_name='grizli-v1'):
@@ -6421,7 +6537,7 @@ def fetch_config_files(get_acs=False, get_sky=True, get_stars=True, get_epsf=Tru
         print('Templates directory: {0}/templates'.format(GRIZLI_PATH))
         os.chdir('{0}/templates'.format(GRIZLI_PATH))
 
-        url = 'http://www.stsci.edu/~brammer/Grizli/Files/'
+        url = 'https://www.stsci.edu/~brammer/Grizli/Files/'
         files = [url+'stars_pickles.npy', url+'stars_bpgs.npy']
 
         for url in files:
@@ -6499,20 +6615,13 @@ MW extinction not implemented.
             return self.F99(wave_aa, self.a_v, unit='aa')
 
 
-class EffectivePSF(object):
+class EffectivePSF:
     def __init__(self):
         """Tools for handling WFC3/IR Effective PSF
 
         See documentation at http://www.stsci.edu/hst/wfc3/analysis/PSF.
 
         PSF files stored in $GRIZLI/CONF/
-
-        Attributes
-        ----------
-
-        Methods
-        -------
-
         """
 
         self.load_PSF_data()
@@ -6793,7 +6902,7 @@ class EffectivePSF(object):
         TBD
         """
         # So much faster than scipy.interpolate.griddata!
-        from scipy.ndimage.interpolation import map_coordinates
+        from scipy.ndimage import map_coordinates
 
         # ePSF only defined to 12.5 pixels
         if self.eval_psf_type in ['WFC3/IR','HST/Optical']:
@@ -6817,7 +6926,7 @@ class EffectivePSF(object):
 
         # Extended PSF
         if extended_data is not None:
-            ok = (np.abs(dx) < self.extended_N) 
+            ok = (np.abs(dx) < self.extended_N)
             ok &= (np.abs(dy) < self.extended_N)
             
             x0 = self.extended_N
@@ -8226,7 +8335,7 @@ def RGBtoHex(vals, rgbtype=1):
     """Converts RGB values in a variety of formats to Hex values.
 
     Parameters
-    -----------
+    ----------
     vals : tuple
          An RGB/RGBA tuple
 
@@ -8388,8 +8497,8 @@ def remove_text_labels(fig):
                 if child.get_text(): # Don't remove empty labels
                     child.set_visible(False)
 
-    
-LOGFILE = '/tmp/grizli.log'
+#zihao changed location of log file
+LOGFILE = 'grizli.log'
 
 
 def log_function_arguments(LOGFILE, frame, func='func', verbose=True):
@@ -8569,7 +8678,125 @@ def simple_LCDM(Om0=0.3, Ode0=0.7, H0=70, Ob0=0.0463, Tcmb0=2.725, name=None):
     from astropy.cosmology import LambdaCDM
     cosmology = LambdaCDM(H0, Om0, Ode0, Tcmb0=Tcmb0, name=name)
     return cosmology
+
+
+def pixel_polygon_mask(polygon, shape, wcs=None):
+    """
+    Make a mask points in a 2D array inside a polygon
     
+    Parameters
+    ----------
+    polygon : str, (2,M) array
+        Something that `grizli.utils.SRegion` can parse as a polygon
+    
+    shape : tuple
+        2-tuple of image dimensions
+    
+    wcs : `astropy.wcs.WCS`
+        If specified, assume ``polygon`` is sky coordinates and transform to
+        image.
+    
+    Returns
+    -------
+    mask : array
+        ``bool`` array with ``shape`` that is `True` inside `polygon`
+    """
+    sr = SRegion(polygon, wrap=False)
+    
+    yp, xp = np.indices(shape)
+    pts = np.array([xp.flatten(), yp.flatten()]).T
+    
+    if wcs is not None:
+        pts = wcs.all_pix2world(pts, 0)
+        
+    mask = np.zeros(shape, dtype=bool).flatten()
+    for p in sr.path:
+        mask |= p.contains_points(pts)
+    
+    return mask.reshape(shape)
+
+
+def make_filter_footprint(filter_size=71, filter_central=0, **kwargs):
+    """
+    Make a footprint for image filtering
+    """
+    filter_footprint = np.ones(filter_size, dtype=int)
+    
+    if filter_central > 0:
+        f0 = (filter_size-1)//2
+        filter_footprint[f0-filter_central:f0+filter_central] = 0
+    
+    return filter_footprint
+
+
+def safe_nanmedian_filter(data, filter_kwargs={}, filter_footprint=None, axis=1, clean=True, cval=0.0):
+    """
+    Run nanmedian filter on `data`
+    
+    Parameters
+    ----------
+    data : array-like
+        The 2D data to filter
+    
+    filter_kwargs : dict
+        Arguments to `~grizli.utils.make_filter_footprint` to make a 1D filter
+    
+    filter_footprint : array-like
+        Specify the filter explicitly.  If 1D, then will apply the filter over
+        `axis=1` (i.e., `x`) of ``data``
+    
+    axis : 0 or 1
+         Axis over which to apply the filter (``axis=1`` filters on rows)
+    
+    clean, cval : bool, scalar
+        Replace `~numpy.nan` in the output with ``cval``
+    
+    Returns
+    -------
+    filter_data : array-like
+        Filtered data
+    
+    filter_name : str
+        The type of filter that was applied: `nbutils.nanmedian` if 
+        `~grizli.nbutils.nanmedian` was imported successfully and 
+        `median_filter` for the fallback to `scip.ndimage.median_filter` 
+        otherwise.
+    """
+    import scipy.ndimage as nd
+    
+    try:
+        from . import nbutils
+        _filter_name = 'nbutils.nanmedian'
+    except:
+        nbutils = None
+        _filter_name = 'median_filter'
+    
+    if filter_footprint is None:
+        _filter_footprint = make_filter_footprint(**filter_kwargs)
+        if axis == 1:
+            _filter_footprint = _filter_footprint[None,:]
+        else:
+            _filter_footprint = _filter_footprint[:,None]
+    else:
+        if filter_footprint.ndim == 1:
+            if axis == 1:
+                _filter_footprint = filter_footprint[None,:]
+            else:
+                _filter_footprint = filter_footprint[:,None]
+        else:
+            _filter_footprint = filter_footprint
+    
+    if nbutils is None:
+        filter_data = nd.median_filter(data, footprint=_filter_footprint)
+    else:
+        filter_data = nd.generic_filter(data, nbutils.nanmedian,
+                                        footprint=_filter_footprint)
+        if clean:
+            filter_data[~np.isfinite(filter_data)] = cval
+            
+    return filter_data, _filter_name
+
+
 def argv_to_dict(argv, defaults={}, dot_dict=True):
     """
     Convert a list of (simple) command-line arguments to a dictionary.
@@ -8847,7 +9074,7 @@ class HubbleXYZ(object):
         Evaluate equations to get positions
         
         Returns
-        =======
+        -------
         x, y, z, r: float
             Coordinates, in km or ``unit``.
             

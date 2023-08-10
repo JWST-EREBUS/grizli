@@ -471,8 +471,7 @@ class Galfitter(object):
     def get_data(self, filter='f140w', catfile=None, segfile=None):
         import glob
 
-        sci_file = glob.glob('{0}-{1}_dr?_sci.fits'.format(self.root, filter))
-
+        sci_file = glob.glob('{0}-{1}*dr?_sci.fits'.format(self.root, filter))
         sci = pyfits.open(sci_file[0])
         wht = pyfits.open(sci_file[0].replace('sci', 'wht'))
 
